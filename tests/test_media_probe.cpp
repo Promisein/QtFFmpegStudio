@@ -18,6 +18,7 @@ private slots:
     void distinguishesMissingAudioAndMalformedJson();
     void ignoresSupersededInput();
     void mainWindowShowsAndClearsMediaInfo();
+    void singleStartRequiresCurrentSupportedMedia();
 };
 
 void MediaProbeTest::parsesTheStreamsUsedByTheBackend()
@@ -116,6 +117,59 @@ void MediaProbeTest::mainWindowShowsAndClearsMediaInfo()
     damaged.close();
     retry->click();
     QTRY_COMPARE_WITH_TIMEOUT(state->text(), QStringLiteral("分析失败"), 10000);
+}
+
+void MediaProbeTest::singleStartRequiresCurrentSupportedMedia()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString valid = dir.filePath(QStringLiteral("有效 输入.mp4"));
+    const QString silent = dir.filePath(QStringLiteral("无音轨.mp4"));
+    const QString damaged = dir.filePath(QStringLiteral("损坏.mp4"));
+    const QString ffmpeg = QString::fromUtf8(FFMPEG_TEST_TOOL);
+    QCOMPARE(QProcess::execute(ffmpeg,
+        {"-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+         "testsrc2=size=160x120:rate=25:duration=1", "-f", "lavfi", "-i",
+         "sine=sample_rate=48000:duration=1", "-c:v", "mpeg4", "-c:a", "aac",
+         "-shortest", valid}), 0);
+    QCOMPARE(QProcess::execute(ffmpeg,
+        {"-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+         "testsrc2=size=160x120:rate=25:duration=1", "-c:v", "mpeg4", silent}), 0);
+    QFile bad(damaged);
+    QVERIFY(bad.open(QIODevice::WriteOnly));
+    bad.write("not media");
+    bad.close();
+
+    MainWindow window(nullptr, dir.filePath("settings.ini"));
+    window.show();
+    auto* input = window.findChild<QLineEdit*>("inputPathEdit");
+    auto* start = window.findChild<QPushButton*>("startRealButton");
+    auto* state = window.findChild<QLabel*>("mediaState");
+    auto* retry = window.findChild<QPushButton*>("mediaRetryButton");
+    QVERIFY(input && start && state && retry);
+    QVERIFY(!start->isEnabled());
+
+    input->setText(valid);
+    QVERIFY(!start->isEnabled());
+    QTRY_VERIFY_WITH_TIMEOUT(start->isEnabled(), 10000);
+
+    input->setText(silent);
+    QVERIFY(!start->isEnabled());
+    QTRY_VERIFY_WITH_TIMEOUT(state->text().contains(QStringLiteral("要求同时包含视频和音频")), 10000);
+    QVERIFY(!start->isEnabled());
+
+    input->setText(damaged);
+    QVERIFY(!start->isEnabled());
+    QTRY_COMPARE_WITH_TIMEOUT(state->text(), QStringLiteral("分析失败"), 10000);
+    QVERIFY(!start->isEnabled());
+
+    input->setText(valid);
+    QTRY_VERIFY_WITH_TIMEOUT(start->isEnabled(), 10000);
+    retry->click();
+    QVERIFY(!start->isEnabled());
+    QTRY_VERIFY_WITH_TIMEOUT(start->isEnabled(), 10000);
+    input->clear();
+    QVERIFY(!start->isEnabled());
 }
 
 QTEST_MAIN(MediaProbeTest)

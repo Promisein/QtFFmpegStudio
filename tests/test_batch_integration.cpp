@@ -117,7 +117,7 @@ void BatchIntegrationTest::batchDisablesOtherTasksAndRecoversAfterCancel()
     QVERIFY(!options->isEnabled());
     batch->cancelQueue();
     QTRY_VERIFY_WITH_TIMEOUT(!batch->active(), 8000);
-    QVERIFY(realStart->isEnabled());
+    QVERIFY(!realStart->isEnabled()); // 尚未选择单文件输入；媒体分析门槛仍然生效。
     QVERIFY(simulationStart->isEnabled());
     QVERIFY(options->isEnabled());
 }

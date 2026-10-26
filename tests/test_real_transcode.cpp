@@ -26,7 +26,7 @@ class RealTranscodeTest : public QObject
 
 private slots:
     void validMediaProducesFileAndUtf8Log();
-    void damagedMediaReportsFailureAndRecoversControls();
+    void damagedMediaIsRejectedBeforeBackendStarts();
     void cancellingMarksTaskAsCancelled();
     void cancelRemovesOnlyOwnedTemporaryOutput();
     void backendAcceptsReservedTemporaryOutput();
@@ -116,6 +116,7 @@ void RealTranscodeTest::validMediaProducesFileAndUtf8Log()
     QVERIFY(!clearLog->isEnabled());
     window.findChild<QLineEdit*>("inputPathEdit")->setText(input);
     window.findChild<QLineEdit*>("outputPathEdit")->setText(output);
+    QTRY_VERIFY_WITH_TIMEOUT(start->isEnabled(), 10000);
 
     bool prematureCompletion = false;
     bool sawEstimatedProgress = false;
@@ -163,7 +164,7 @@ void RealTranscodeTest::validMediaProducesFileAndUtf8Log()
     QVERIFY(QFileInfo(directory.filePath("other.mp4")).size() > 0);
 }
 
-void RealTranscodeTest::damagedMediaReportsFailureAndRecoversControls()
+void RealTranscodeTest::damagedMediaIsRejectedBeforeBackendStarts()
 {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
@@ -181,19 +182,27 @@ void RealTranscodeTest::damagedMediaReportsFailureAndRecoversControls()
     auto* elapsed = window.findChild<QLabel*>("realElapsedLabel");
     auto* log = window.findChild<QPlainTextEdit*>("realLog");
     auto* progress = window.findChild<QProgressBar*>("realTranscodeProgress");
-    QVERIFY(start && cancel && state && elapsed && log && progress);
+    auto* mediaState = window.findChild<QLabel*>("mediaState");
+    QVERIFY(start && cancel && state && elapsed && log && progress && mediaState);
     window.findChild<QLineEdit*>("inputPathEdit")->setText(input);
     window.findChild<QLineEdit*>("outputPathEdit")->setText(output);
-
+    QTRY_COMPARE_WITH_TIMEOUT(mediaState->text(), QStringLiteral("分析失败"), 10000);
+    QVERIFY(!start->isEnabled());
     start->click();
-    QTRY_VERIFY_WITH_TIMEOUT(state->text().contains(QStringLiteral("失败")), 10000);
-    QVERIFY(start->isEnabled());
     QVERIFY(!cancel->isEnabled());
     QVERIFY(!QFileInfo::exists(output));
     QVERIFY(QDir(directory.path()).entryList({"QFS-*.tmp"}, QDir::Files).isEmpty());
     QVERIFY(progress->value() < 100);
-    QVERIFY(elapsed->text().contains(QStringLiteral("秒")));
-    QVERIFY(log->toPlainText().contains(QStringLiteral("打开输入文件失败")));
+    QCOMPARE(elapsed->text(), QStringLiteral("耗时：—"));
+    QVERIFY(log->toPlainText().isEmpty());
+
+    const QString backend = QDir(QCoreApplication::applicationDirPath())
+        .filePath(QStringLiteral("FFmpegProjectBackend.exe"));
+    QProcess process;
+    process.start(backend, {QStringLiteral("-i"), input, QStringLiteral("-o"), output});
+    QVERIFY(process.waitForFinished(10000));
+    QVERIFY(process.exitCode() != 0);
+    QVERIFY(!QFileInfo::exists(output));
 }
 
 void RealTranscodeTest::cancellingMarksTaskAsCancelled()
@@ -211,6 +220,7 @@ void RealTranscodeTest::cancellingMarksTaskAsCancelled()
     QVERIFY(start && cancel && state);
     window.findChild<QLineEdit*>("inputPathEdit")->setText(input);
     window.findChild<QLineEdit*>("outputPathEdit")->setText(output);
+    QTRY_VERIFY_WITH_TIMEOUT(start->isEnabled(), 10000);
 
     start->click();
     QVERIFY(cancel->isEnabled());
@@ -240,6 +250,7 @@ void RealTranscodeTest::cancelRemovesOnlyOwnedTemporaryOutput()
     QVERIFY(start && cancel && state);
     window.findChild<QLineEdit*>("inputPathEdit")->setText(input);
     window.findChild<QLineEdit*>("outputPathEdit")->setText(output);
+    QTRY_VERIFY_WITH_TIMEOUT(start->isEnabled(), 10000);
     start->click();
     auto owned = [&]() {
         QStringList paths = QDir(directory.path()).entryList({"QFS-*.tmp"}, QDir::Files);

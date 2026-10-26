@@ -52,6 +52,7 @@ private:
     enum class TaskState { Idle, Simulating, Transcoding, Cancelling,
                            BatchRunning, BatchCancelling };
     void setTaskState(TaskState state);
+    void refreshRealStartAvailability();
     void loadSettings();
     void saveSettings();
 
@@ -63,6 +64,8 @@ private:
     QLabel* mediaDetails_ = nullptr;
     QPushButton* mediaRetryButton_ = nullptr;
     MediaProbe* mediaProbe_ = nullptr;
+    QString analyzedInputPath_;
+    bool analyzedInputSupported_ = false;
     QPushButton* inputButton_ = nullptr;
     QPushButton* outputButton_ = nullptr;
     QPushButton* checkButton_ = nullptr;

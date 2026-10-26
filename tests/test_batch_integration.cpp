@@ -102,6 +102,7 @@ void BatchIntegrationTest::batchDisablesOtherTasksAndRecoversAfterCancel()
     if (qEnvironmentVariableIsSet("QTFFMPEG_SCREENSHOT")) {
         auto* tabs = window.findChild<QTabBar*>(QStringLiteral("modeNavigation"));
         tabs->setCurrentIndex(1);
+        window.findChild<QLineEdit*>(QStringLiteral("batchOutputDirectoryEdit"))->clear();
         window.show();
         QTest::qWait(150);
         QVERIFY(window.grab().save(qEnvironmentVariable("QTFFMPEG_SCREENSHOT")));

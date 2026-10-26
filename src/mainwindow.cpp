@@ -206,7 +206,7 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
     auto* realGroup = new QGroupBox(QStringLiteral("单文件转码"), taskPages);
     auto* realLayout = new QVBoxLayout(realGroup);
     auto* realButtons = new QHBoxLayout;
-    startRealButton_ = new QPushButton(QStringLiteral("开始真实转码"), realGroup);
+    startRealButton_ = new QPushButton(QStringLiteral("开始转码"), realGroup);
     startRealButton_->setObjectName(QStringLiteral("startRealButton"));
     cancelRealButton_ = new QPushButton(QStringLiteral("取消转码"), realGroup);
     cancelRealButton_->setObjectName(QStringLiteral("cancelRealButton"));
@@ -351,6 +351,11 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
                  info.channels > 0 ? QString::number(info.channels) : unknown));
         mediaState_->setText(info.supported ? QStringLiteral("已分析 · 可尝试转码")
             : QStringLiteral("已分析 · 当前转码要求同时包含视频和音频流"));
+        if (taskState_ == TaskState::Idle) {
+            realStateLabel_->setText(info.supported
+                ? QStringLiteral("视频信息已通过；选择输出文件后即可开始转码。")
+                : QStringLiteral("当前输入缺少视频或音频流，请选择其他 MP4。"));
+        }
         refreshRealStartAvailability();
     });
     connect(mediaProbe_, &MediaProbe::failed, this,
@@ -360,6 +365,8 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
         analyzedInputSupported_ = false;
         mediaState_->setText(QStringLiteral("分析失败"));
         mediaDetails_->setText(error);
+        if (taskState_ == TaskState::Idle)
+            realStateLabel_->setText(QStringLiteral("输入视频分析失败，请检查文件或重新选择。"));
         refreshRealStartAvailability();
     });
     connect(inputPathEdit_, &QLineEdit::textChanged, this, [this](const QString& path) {
@@ -369,6 +376,9 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
         mediaRetryButton_->setEnabled(!path.isEmpty());
         mediaState_->setText(path.isEmpty() ? QStringLiteral("等待选择视频") : QStringLiteral("分析中…"));
         mediaDetails_->setText(QStringLiteral("选择 MP4 文件后显示视频信息"));
+        if (taskState_ == TaskState::Idle)
+            realStateLabel_->setText(path.isEmpty()
+                ? QStringLiteral("请选择输入视频。") : QStringLiteral("正在分析输入视频…"));
         refreshRealStartAvailability();
         mediaProbe_->inspect(path);
     });
@@ -377,11 +387,19 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
         analyzedInputSupported_ = false;
         mediaState_->setText(QStringLiteral("分析中…"));
         mediaDetails_->setText(QStringLiteral("正在重新读取视频信息"));
+        if (taskState_ == TaskState::Idle)
+            realStateLabel_->setText(QStringLiteral("正在重新分析输入视频…"));
         refreshRealStartAvailability();
         mediaProbe_->inspect(inputPathEdit_->text());
     });
     connect(outputPathEdit_, &QLineEdit::textChanged, this, [this](const QString& path) {
         outputPathEdit_->setToolTip(path);
+        if (taskState_ == TaskState::Idle && analyzedInputSupported_
+            && analyzedInputPath_ == inputPathEdit_->text()) {
+            realStateLabel_->setText(path.isEmpty()
+                ? QStringLiteral("视频信息已通过；请选择输出文件。")
+                : QStringLiteral("输入与输出已选择；可检查路径并开始转码。"));
+        }
     });
     simulationTimer_ = new QTimer(this);
     simulationTimer_->setInterval(200);

@@ -1,6 +1,19 @@
 # QtFFmpegStudio
 
-基于 Qt Widgets 和 FFmpeg 的 Windows 桌面视频转码工具。支持单文件转码与批量队列，转码任务由独立后端进程执行，界面保持响应。
+基于 C++17、Qt Widgets 和 FFmpeg 的 Windows 桌面视频转码工具。支持单文件转码、批量队列、媒体信息分析、取消任务和转码进度显示。Qt 界面通过 `QProcess` 管理独立后端进程，批量任务最多同时运行 3 个。
+
+以下截图由项目的 Qt 测试程序在 Windows 11 上截取，使用测试素材。
+
+| 单文件转码 | 批量队列 |
+| --- | --- |
+| ![单文件界面](assets/screenshots/single.png) | ![批量队列界面](assets/screenshots/batch.png) |
+
+## 使用方法
+
+1. 在“单文件转码”页选择带视频和音频流的 MP4，等待视频信息分析完成。
+2. 选择输出 `.mp4` 路径，设置旋转、倍速及音视频编码器，点击“开始真实转码”。
+3. 查看整体估算进度、耗时和日志；任务成功结束后可以打开输出目录。
+4. 批量处理时切到“批量队列”，设置输出目录，添加多个 MP4，选择同时运行的任务数（1～3），再启动队列。点击任务行可以查看该任务日志。
 
 ## 功能
 
@@ -10,25 +23,25 @@
 - 显示整体转码进度；支持取消运行中的任务，并清理本次任务创建的临时输出。
 - 复制、清空日志，保存常用设置；单文件成功后可打开输出目录。
 
-目前处理带视频和音频流的 MP4 文件，输出为 MP4。进度依据后端封装阶段的时间戳估算；运行中最高显示 99%，成功完成后显示 100%。耗时是任务开始至后端结束的实际经过时间。
+**支持范围：**当前处理带视频和音频流的 MP4，输出为 MP4；支持 MPEG-4/H.264 视频和 AC-3/AAC 音频输出。无音轨视频、其他容器、多音轨选择和字幕处理尚未实现。倍速通过采样选择改变播放时长，也会改变音调。进度依据封装阶段时间戳估算，运行中最高显示 99%，成功完成后显示 100%。
 
 ## 实现结构
 
-```text
-Qt Widgets GUI
-  ├─ MainWindow：单文件操作与设置
-  ├─ BatchWidget / BatchTaskModel：队列调度、任务状态与日志
-  └─ BackendProcess：QProcess 启动、监听和取消后端
-                     │
-                     ▼
-FFmpegProjectBackend.exe：解封装、解码、处理、编码、封装流水线
+```mermaid
+flowchart LR
+    UI[Qt Widgets 界面] -->|QProcess / JSON| Probe[ffprobe 媒体分析]
+    UI -->|每个运行任务一个 QProcess| Backend[FFmpegProjectBackend.exe]
+    Backend --> Demux[解封装]
+    Demux --> VDec[视频解码] --> VEnc[旋转 / 倍速 / 编码] --> Mux[封装]
+    Demux --> ADec[音频解码] --> AEnc[重采样 / 倍速 / 编码] --> Mux
+    Mux -->|结构化进度与日志| UI
 ```
 
-每个运行中的批量任务对应一个后端进程。后端通过标准输出发送日志与结构化进度消息；GUI 异步读取并更新界面。
+`MainWindow` 处理单文件操作；`BatchWidget` 与 `BatchTaskModel` 管理队列状态；`BackendProcess` 负责进程启动、输出解析和取消。每个后端任务拥有独立的音视频队列与六个流水线线程。后端通过标准输出发送结构化进度和日志，GUI 异步更新界面。取消和失败时清理本次任务的临时输出，成功后再发布最终文件。
 
 ## 构建与运行
 
-当前项目面向 Windows，使用 C++17、CMake 3.27+、Qt 6.8.3 Widgets 和 Qt 配套的 MinGW 13.1。还需要 FFmpeg 4.4 的 Windows shared SDK，包含 `include/`、`lib/`、`bin/`；媒体分析和真实转码测试分别需要 `bin/ffprobe.exe` 与 `bin/ffmpeg.exe`。这些第三方文件不包含在仓库中。
+当前项目面向 Windows，已在 Windows 11、CMake 3.27+、Qt 6.8.3 Widgets、Qt 配套 MinGW 13.1 和 FFmpeg 4.4 shared SDK 上构建与测试。SDK 需要包含 `include/`、`lib/`、`bin/ffprobe.exe` 和 `bin/ffmpeg.exe`。第三方文件不在源码仓库中。
 
 以下命令中的路径请改成实际安装位置。`FFMPEG_ROOT` 未指定时默认查找 `../FFmpegProject/ffmpeg-4.4-full_build-shared`。
 
@@ -36,18 +49,22 @@ FFmpegProjectBackend.exe：解封装、解码、处理、编码、封装流水�
 $env:PATH = 'D:\Qt\Tools\mingw1310_64\bin;D:\Qt\6.8.3\mingw_64\bin;' + $env:PATH
 cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=D:/Qt/Tools/mingw1310_64/bin/gcc.exe -DCMAKE_CXX_COMPILER=D:/Qt/Tools/mingw1310_64/bin/g++.exe -DCMAKE_PREFIX_PATH=D:/Qt/6.8.3/mingw_64 -DFFMPEG_ROOT=D:/path/to/ffmpeg-4.4-full_build-shared
 cmake --build build --parallel 4
-ctest --test-dir build --output-on-failure
+ctest --test-dir build --output-on-failure --parallel 4
 ```
 
 构建后运行 `build/QtFFmpegStudio.exe`。`FFmpegProjectBackend.exe`、`ffprobe.exe` 和所需 DLL 会复制到构建目录。也可以在 CLion 中配置相同的 CMake 选项，构建并运行 `QtFFmpegStudio` 目标。
 
-## 转码正确性验证
+## 验证
+
+项目使用 Qt Test / CTest 覆盖参数、媒体分析、单文件与批量转码、取消、输出保护、进度和日志。当前测试列表为 11 项；请在自己的构建环境运行上面的 `ctest` 命令确认结果。
+
+转码输出还可用以下脚本检查流信息、时长、完整解码、短静音和旋转方向：
 
 ```powershell
 powershell -File .\scripts\verify_transcode_correctness.ps1 -BuildDirectory .\build -FfmpegRoot D:\path\to\ffmpeg-4.4-full_build-shared
 ```
 
-脚本在构建目录生成测试视频，检查普通转码、顺时针旋转、0.5x/2x 倍速和 60 秒素材的音视频时长、编码、完整解码、静音片段与旋转方向。结果保存在构建目录的 `correctness-日期时间/` 下。具体测试数据与范围见[验证记录](verification/2026-10-26-transcode-correctness.md)。
+脚本使用 FFmpeg 生成合成素材；结果保存在构建目录的 `correctness-日期时间/` 下。测量结果与适用范围见[转码正确性验证记录](verification/2026-10-26-transcode-correctness.md)。这些自动检查不能代替真实视频的人工试听、播放和另一台 Windows 电脑上的分发包验收。
 
 ## 打包
 
@@ -55,7 +72,7 @@ powershell -File .\scripts\verify_transcode_correctness.ps1 -BuildDirectory .\bu
 powershell -File .\scripts\package.ps1 -BuildDirectory .\build -QtBin D:\Qt\6.8.3\mingw_64\bin -MinGWBin D:\Qt\Tools\mingw1310_64\bin
 ```
 
-脚本调用 `windeployqt`，将 GUI、后端、`ffprobe.exe` 及运行依赖放入 `dist/QtFFmpegStudio-日期时间/`。请在目标 Windows 机器上单独验证打包结果。
+脚本调用 `windeployqt`，将 GUI、后端、`ffprobe.exe` 及运行依赖放入 `dist/QtFFmpegStudio-日期时间/`。源码仓库不包含构建和打包产物；请在目标 Windows 机器上单独验证打包结果。打包后的可执行文件为 `QtFFmpegStudio.exe`。
 
 ## 仓库目录
 
@@ -66,5 +83,6 @@ powershell -File .\scripts\package.ps1 -BuildDirectory .\build -QtBin D:\Qt\6.8.
 | `tests/` | Qt 界面、批量队列、真实转码与输出保护测试 |
 | `scripts/` | Windows 打包脚本 |
 | `verification/` | 可复现的输出正确性记录与已知边界 |
+| `assets/screenshots/` | Qt 界面截图 |
 
 `input/`、`output/`、`dist/` 和构建目录属于本地数据或产物，不提交到仓库。

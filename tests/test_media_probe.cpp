@@ -103,6 +103,9 @@ void MediaProbeTest::mainWindowShowsAndClearsMediaInfo()
     auto* retry = window.findChild<QPushButton*>("mediaRetryButton");
     QVERIFY(retry);
     if (qEnvironmentVariableIsSet("QTFFMPEG_SINGLE_SCREENSHOT")) {
+        window.findChild<QLineEdit*>("outputPathEdit")
+            ->setText(dir.filePath(QStringLiteral("转码结果.mp4")));
+        QVERIFY(QMetaObject::invokeMethod(&window, "checkPaths"));
         QVERIFY(window.grab().save(qEnvironmentVariable("QTFFMPEG_SINGLE_SCREENSHOT")));
     }
     path->clear();

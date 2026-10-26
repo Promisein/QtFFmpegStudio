@@ -13,9 +13,9 @@
 `scripts/verify_transcode_correctness.ps1` 自动生成两段 MP4：320×180、25 FPS 的 `testsrc2` 视频及 48 kHz、1 kHz 的正弦音频，输入编码为 MPEG-4/AAC，时长分别为 4 秒和 60 秒。每次运行创建独立的 `correctness-日期时间/` 目录，保留输入、输出、日志、`results.csv` 和 `results.json`。
 
 ```powershell
-cmake --build .\cmake-build-codex-lesson4 --parallel 4
-ctest --test-dir .\cmake-build-codex-lesson4 --output-on-failure --parallel 4
-powershell -File .\scripts\verify_transcode_correctness.ps1 -BuildDirectory .\cmake-build-codex-lesson4
+cmake --build .\build --parallel 4
+ctest --test-dir .\build --output-on-failure --parallel 4
+powershell -File .\scripts\verify_transcode_correctness.ps1 -BuildDirectory .\build
 ```
 
 验证规则：通过 `ffprobe` 比较输入/输出流、编码、分辨率和起止时间；输出时长与目标差不超过 0.22 秒，音视频流开始相差不超过 0.1 秒，结束相差不超过 0.22 秒；对每个输出执行完整解码，并检查退出码。普通转码还检查测试音中的短静音段；90° 转码与顺时针、逆时针参考画面分别比较 PSNR。
@@ -30,9 +30,9 @@ powershell -File .\scripts\verify_transcode_correctness.ps1 -BuildDirectory .\cm
 | 0.5x，H.264/AAC | 8.000 s | 7.960 s | 8.043 s | 通过 | 通过 |
 | 60 秒，MPEG-4/AC-3 | 60.000 s | 59.960 s | 60.032 s | 通过 | 通过 |
 
-普通转码的短静音段从修复前的 188 段降为 1 段。90° 旋转后的画面尺寸为 180×320；与顺时针参考画面的平均 PSNR 为 38.24 dB，与逆时针参考画面为 6.45 dB。以上结果来自 `cmake-build-codex-lesson4/correctness-20261026-171621/results.json`，该构建目录不提交到仓库。
+普通转码的短静音段从修复前的 188 段降为 1 段。90° 旋转后的画面尺寸为 180×320；与顺时针参考画面的平均 PSNR 为 38.24 dB，与逆时针参考画面为 6.45 dB。以上结果来自当次本机构建目录中的 `correctness-20261026-171621/results.json`；构建产物不提交到仓库，脚本每次运行都会生成新的结果目录。
 
-完整构建通过，CTest 10/10 通过。重新打包的后端与构建目录中的二进制哈希一致；使用打包后的后端转码同一段 4 秒素材，音频为 4.032 秒、视频为 3.960 秒。
+当次完整构建通过，CTest 10/10 通过。重新打包的后端与构建目录中的二进制哈希一致；使用打包后的后端转码同一段 4 秒素材，音频为 4.032 秒、视频为 3.960 秒。该测试计数记录的是修复发生时的项目状态，后续新增的测试请以当前 `ctest` 输出为准。
 
 ## 解释范围与人工验收
 

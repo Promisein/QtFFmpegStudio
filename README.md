@@ -28,16 +28,30 @@
 ## 实现结构
 
 ```mermaid
-flowchart LR
-    UI[Qt Widgets 界面] -->|QProcess / JSON| Probe[ffprobe 媒体分析]
-    UI -->|每个运行任务一个 QProcess| Backend[FFmpegProjectBackend.exe]
-    Backend --> Demux[解封装]
-    Demux --> VDec[视频解码] --> VEnc[旋转 / 倍速 / 编码] --> Mux[封装]
-    Demux --> ADec[音频解码] --> AEnc[重采样 / 倍速 / 编码] --> Mux
-    Mux -->|结构化进度与日志| UI
+flowchart TB
+    subgraph Studio["QtFFmpegStudio：当前 GUI 调用路径"]
+        UI["Qt Widgets 界面"] -->|QProcess| Probe["ffprobe.exe：媒体分析"]
+        UI -->|单文件：一个 QProcess| Backend
+        UI --> Queue["BatchWidget：同时运行 1～3 项"]
+        Queue -->|批量：每项一个 QProcess| Backend["FFmpegProjectBackend.exe：每实例一个文件"]
+    end
+
+    subgraph Task["每个后端进程内：独立 Pipeline，六个阶段线程"]
+        Demux["解封装线程"] --> VDec["视频解码线程"] --> VEnc["视频处理与编码线程"] --> Mux["封装线程"]
+        Demux --> ADec["音频解码线程"] --> AEnc["音频处理与编码线程"] --> Mux
+    end
+    Backend --> Demux
+    Backend -.->|结构化进度与日志| UI
+
+    subgraph Original["原 FFmpegProject CLI：独立批量入口"]
+        CLI["多个输入文件"] --> Pool["ThreadPool：固定数量 worker"]
+        Pool -->|每个 worker 处理一个文件| LegacyTask["单文件任务：独立六线程流水线"]
+    end
 ```
 
 `MainWindow` 处理单文件操作；`BatchWidget` 与 `BatchTaskModel` 管理队列状态；`BackendProcess` 负责进程启动、输出解析和取消。每个后端任务拥有独立的音视频队列与六个流水线线程。后端通过标准输出发送结构化进度和日志，GUI 异步更新界面。取消和失败时清理本次任务的临时输出，成功后再发布最终文件。
+
+线程池属于原 `FFmpegProject` CLI 的文件级并发设计：固定 worker 从任务队列领取文件，每个文件再运行自己的六线程流水线。当前 Qt GUI 的批量并发由 `BatchWidget` 限制后端进程数量；仓库中保留了 `backend/src/thread_pool.cpp`，但 `backend/main.cpp` 当前没有实例化 `ThreadPool`。图中将两个独立入口分别标出，避免把 GUI 的进程调度画成线程池。
 
 ## 构建与运行
 

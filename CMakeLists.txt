@@ -6,10 +6,6 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-if(NOT CMAKE_PREFIX_PATH)
-    set(CMAKE_PREFIX_PATH "D:/Qt/6.8.3/mingw_64")
-endif()
-
 find_package(Qt6 COMPONENTS
         Core
         Gui

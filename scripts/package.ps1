@@ -1,5 +1,5 @@
 ﻿param(
-    [string] $BuildDirectory = (Join-Path $PSScriptRoot '..\cmake-build-codex-lesson4'),
+    [string] $BuildDirectory = (Join-Path $PSScriptRoot '..\build'),
     [string] $QtBin = 'D:\QT\6.8.3\mingw_64\bin',
     [string] $MinGWBin = 'D:\QT\Tools\mingw1310_64\bin',
     [string] $Destination = ''

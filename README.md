@@ -5,6 +5,7 @@
 ## 功能
 
 - 选择 MP4 输入和输出文件，设置旋转角度、播放倍速、视频编码器（MPEG-4 / H.264）与音频编码器（AC-3 / AAC）。
+- 选择输入后异步分析视频信息，显示文件大小、时长、编码、分辨率、帧率和音轨信息；分析超时或失败会提示原因，并可点击“重新分析”。
 - 批量添加任务，设置同时运行的任务数（1～3），分别查看任务状态、进度、耗时和日志。
 - 显示整体转码进度；支持取消运行中的任务，并清理本次任务创建的临时输出。
 - 复制、清空日志，保存常用设置；单文件成功后可打开输出目录。
@@ -27,7 +28,7 @@ FFmpegProjectBackend.exe：解封装、解码、处理、编码、封装流水�
 
 ## 构建与运行
 
-当前项目面向 Windows，使用 C++17、CMake 3.27+、Qt 6.8.3 Widgets 和 Qt 配套的 MinGW 13.1。还需要 FFmpeg 4.4 的 Windows shared SDK，包含 `include/`、`lib/`、`bin/`；运行真实转码测试时需要 `bin/ffmpeg.exe`。这些第三方文件不包含在仓库中。
+当前项目面向 Windows，使用 C++17、CMake 3.27+、Qt 6.8.3 Widgets 和 Qt 配套的 MinGW 13.1。还需要 FFmpeg 4.4 的 Windows shared SDK，包含 `include/`、`lib/`、`bin/`；媒体分析和真实转码测试分别需要 `bin/ffprobe.exe` 与 `bin/ffmpeg.exe`。这些第三方文件不包含在仓库中。
 
 以下命令中的路径请改成实际安装位置。`FFMPEG_ROOT` 未指定时默认查找 `../FFmpegProject/ffmpeg-4.4-full_build-shared`。
 
@@ -38,7 +39,7 @@ cmake --build build --parallel 4
 ctest --test-dir build --output-on-failure
 ```
 
-构建后运行 `build/QtFFmpegStudio.exe`。`FFmpegProjectBackend.exe` 和所需 DLL 会复制到构建目录。也可以在 CLion 中配置相同的 CMake 选项，构建并运行 `QtFFmpegStudio` 目标。
+构建后运行 `build/QtFFmpegStudio.exe`。`FFmpegProjectBackend.exe`、`ffprobe.exe` 和所需 DLL 会复制到构建目录。也可以在 CLion 中配置相同的 CMake 选项，构建并运行 `QtFFmpegStudio` 目标。
 
 ## 转码正确性验证
 
@@ -54,7 +55,7 @@ powershell -File .\scripts\verify_transcode_correctness.ps1 -BuildDirectory .\bu
 powershell -File .\scripts\package.ps1 -BuildDirectory .\build -QtBin D:\Qt\6.8.3\mingw_64\bin -MinGWBin D:\Qt\Tools\mingw1310_64\bin
 ```
 
-脚本调用 `windeployqt`，将 GUI、后端及运行依赖放入 `dist/QtFFmpegStudio-日期时间/`。请在目标 Windows 机器上单独验证打包结果。
+脚本调用 `windeployqt`，将 GUI、后端、`ffprobe.exe` 及运行依赖放入 `dist/QtFFmpegStudio-日期时间/`。请在目标 Windows 机器上单独验证打包结果。
 
 ## 仓库目录
 

@@ -20,6 +20,7 @@ class QTimer;
 class QCloseEvent;
 class BackendProcess;
 class BatchWidget;
+class MediaProbe;
 class QSettings;
 class QWidget;
 
@@ -58,6 +59,10 @@ private:
     QWidget* singleFileControls_ = nullptr;
     QWidget* singleFileTools_ = nullptr;
     QLineEdit* outputPathEdit_ = nullptr;
+    QLabel* mediaState_ = nullptr;
+    QLabel* mediaDetails_ = nullptr;
+    QPushButton* mediaRetryButton_ = nullptr;
+    MediaProbe* mediaProbe_ = nullptr;
     QPushButton* inputButton_ = nullptr;
     QPushButton* outputButton_ = nullptr;
     QPushButton* checkButton_ = nullptr;

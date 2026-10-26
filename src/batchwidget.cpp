@@ -15,6 +15,7 @@
 #include <QItemSelectionModel>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSplitter>
 #include <QTableView>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -61,7 +62,12 @@ BatchWidget::BatchWidget(QWidget* parent, std::function<TranscodeOptions()> opti
     concurrencyRow->addStretch();
     layout->addLayout(concurrencyRow);
 
-    table_ = new QTableView(this);
+    auto* splitter = new QSplitter(Qt::Vertical, this);
+    splitter->setObjectName(QStringLiteral("batchContentSplitter"));
+    auto* tablePane = new QWidget(splitter);
+    auto* tableLayout = new QVBoxLayout(tablePane);
+    tableLayout->setContentsMargins(0, 0, 0, 0);
+    table_ = new QTableView(tablePane);
     table_->setObjectName(QStringLiteral("batchTable"));
     table_->setModel(model_);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -76,34 +82,42 @@ BatchWidget::BatchWidget(QWidget* parent, std::function<TranscodeOptions()> opti
     table_->horizontalHeader()->resizeSection(3, 150);
     table_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
     table_->setMinimumHeight(180);
-    layout->addWidget(table_);
+    tableLayout->addWidget(table_);
 
-    stateLabel_ = new QLabel(QStringLiteral("尚未添加批量任务。"), this);
+    stateLabel_ = new QLabel(QStringLiteral("尚未添加批量任务。"), tablePane);
     stateLabel_->setObjectName(QStringLiteral("batchStateLabel"));
-    layout->addWidget(stateLabel_);
+    tableLayout->addWidget(stateLabel_);
+    auto* logPane = new QWidget(splitter);
+    auto* logLayout = new QVBoxLayout(logPane);
+    logLayout->setContentsMargins(0, 0, 0, 0);
     auto* logHeader = new QHBoxLayout;
-    logHeader->addWidget(new QLabel(QStringLiteral("查看日志："), this));
-    logSelector_ = new QComboBox(this);
+    logHeader->addWidget(new QLabel(QStringLiteral("查看日志："), logPane));
+    logSelector_ = new QComboBox(logPane);
     logSelector_->setObjectName(QStringLiteral("batchLogSelector"));
     logSelector_->setMinimumWidth(220);
     logSelector_->addItem(QStringLiteral("全部日志"), QVariant::fromValue<qulonglong>(0));
     logHeader->addWidget(logSelector_);
     logHeader->addStretch();
-    auto* copyLogButton = new QPushButton(QStringLiteral("复制日志"), this);
+    auto* copyLogButton = new QPushButton(QStringLiteral("复制日志"), logPane);
     copyLogButton->setObjectName(QStringLiteral("batchCopyLogButton"));
     copyLogButton->setEnabled(false);
-    auto* clearLogButton = new QPushButton(QStringLiteral("清空日志"), this);
+    auto* clearLogButton = new QPushButton(QStringLiteral("清空日志"), logPane);
     clearLogButton->setObjectName(QStringLiteral("batchClearLogButton"));
     clearLogButton->setEnabled(false);
     logHeader->addWidget(copyLogButton);
     logHeader->addWidget(clearLogButton);
-    layout->addLayout(logHeader);
-    log_ = new QPlainTextEdit(this);
+    logLayout->addLayout(logHeader);
+    log_ = new QPlainTextEdit(logPane);
     log_->setObjectName(QStringLiteral("batchLog"));
     log_->setReadOnly(true);
     log_->setMaximumBlockCount(2000);
     log_->setPlaceholderText(QStringLiteral("各任务的后端日志会按任务编号显示在这里"));
-    layout->addWidget(log_);
+    logLayout->addWidget(log_);
+    splitter->addWidget(tablePane);
+    splitter->addWidget(logPane);
+    splitter->setStretchFactor(0, 3);
+    splitter->setStretchFactor(1, 2);
+    layout->addWidget(splitter, 1);
 
     connect(log_, &QPlainTextEdit::textChanged, this,
             [this, copyLogButton, clearLogButton]() {

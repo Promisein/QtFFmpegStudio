@@ -2,6 +2,7 @@
 #include "backendprocess.h"
 #include "batchwidget.h"
 #include "elapsedformat.h"
+#include "mediaprobe.h"
 
 #include <QDir>
 #include <QComboBox>
@@ -12,6 +13,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QFont>
 #include <QGuiApplication>
 #include <QGroupBox>
@@ -22,6 +24,7 @@
 #include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSettings>
 #include <QStatusBar>
 #include <QTabBar>
@@ -92,11 +95,29 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
     outputRow->addWidget(outputButton_);
     singlePathsLayout->addWidget(new QLabel(QStringLiteral("输出文件"), singleFileControls_));
     singlePathsLayout->addLayout(outputRow);
-    layout->addWidget(singleFileControls_);
+    auto* mediaGroup = new QGroupBox(QStringLiteral("视频信息"), singleFileControls_);
+    mediaGroup->setObjectName(QStringLiteral("mediaInfoGroup"));
+    auto* mediaLayout = new QVBoxLayout(mediaGroup);
+    mediaState_ = new QLabel(QStringLiteral("等待选择视频"), mediaGroup);
+    mediaState_->setObjectName(QStringLiteral("mediaState"));
+    mediaRetryButton_ = new QPushButton(QStringLiteral("重新分析"), mediaGroup);
+    mediaRetryButton_->setObjectName(QStringLiteral("mediaRetryButton"));
+    mediaRetryButton_->setEnabled(false);
+    mediaDetails_ = new QLabel(QStringLiteral("选择 MP4 文件后显示视频信息"), mediaGroup);
+    mediaDetails_->setObjectName(QStringLiteral("mediaDetails"));
+    mediaDetails_->setTextFormat(Qt::PlainText);
+    mediaDetails_->setWordWrap(true);
+    auto* mediaHeader = new QHBoxLayout;
+    mediaHeader->addWidget(mediaState_);
+    mediaHeader->addStretch();
+    mediaHeader->addWidget(mediaRetryButton_);
+    mediaLayout->addLayout(mediaHeader);
+    mediaLayout->addWidget(mediaDetails_);
+    singlePathsLayout->addWidget(mediaGroup);
 
     optionsGroup_ = new QGroupBox(QStringLiteral("转码参数"), central);
     optionsGroup_->setObjectName(QStringLiteral("optionsGroup"));
-    auto* optionsForm = new QFormLayout(optionsGroup_);
+    auto* optionsForm = new QGridLayout(optionsGroup_);
 
     rotationCombo_ = new QComboBox(optionsGroup_);
     rotationCombo_->setObjectName(QStringLiteral("rotationCombo"));
@@ -104,7 +125,8 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
     rotationCombo_->addItem(QStringLiteral("顺时针 90°"), 90);
     rotationCombo_->addItem(QStringLiteral("旋转 180°"), 180);
     rotationCombo_->addItem(QStringLiteral("顺时针 270°"), 270);
-    optionsForm->addRow(QStringLiteral("旋转角度"), rotationCombo_);
+    optionsForm->addWidget(new QLabel(QStringLiteral("旋转角度"), optionsGroup_), 0, 0);
+    optionsForm->addWidget(rotationCombo_, 0, 1);
 
     speedSpin_ = new QDoubleSpinBox(optionsGroup_);
     speedSpin_->setObjectName(QStringLiteral("speedSpin"));
@@ -113,19 +135,24 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
     speedSpin_->setSingleStep(0.25);
     speedSpin_->setSuffix(QStringLiteral("x"));
     speedSpin_->setValue(1.0);
-    optionsForm->addRow(QStringLiteral("播放倍速"), speedSpin_);
+    optionsForm->addWidget(new QLabel(QStringLiteral("播放倍速"), optionsGroup_), 0, 2);
+    optionsForm->addWidget(speedSpin_, 0, 3);
 
     videoCodecCombo_ = new QComboBox(optionsGroup_);
     videoCodecCombo_->setObjectName(QStringLiteral("videoCodecCombo"));
     videoCodecCombo_->addItem(QStringLiteral("MPEG-4"), QStringLiteral("mpeg4"));
     videoCodecCombo_->addItem(QStringLiteral("H.264"), QStringLiteral("h264"));
-    optionsForm->addRow(QStringLiteral("视频编码"), videoCodecCombo_);
+    optionsForm->addWidget(new QLabel(QStringLiteral("视频编码"), optionsGroup_), 1, 0);
+    optionsForm->addWidget(videoCodecCombo_, 1, 1);
 
     audioCodecCombo_ = new QComboBox(optionsGroup_);
     audioCodecCombo_->setObjectName(QStringLiteral("audioCodecCombo"));
     audioCodecCombo_->addItem(QStringLiteral("AC-3"), QStringLiteral("ac3"));
     audioCodecCombo_->addItem(QStringLiteral("AAC"), QStringLiteral("aac"));
-    optionsForm->addRow(QStringLiteral("音频编码"), audioCodecCombo_);
+    optionsForm->addWidget(new QLabel(QStringLiteral("音频编码"), optionsGroup_), 1, 2);
+    optionsForm->addWidget(audioCodecCombo_, 1, 3);
+    optionsForm->setColumnStretch(1, 1);
+    optionsForm->setColumnStretch(3, 1);
     layout->addWidget(optionsGroup_);
 
     singleFileTools_ = new QWidget(central);
@@ -147,10 +174,10 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
     optionsPreview_ = new QPlainTextEdit(singleFileTools_);
     optionsPreview_->setObjectName(QStringLiteral("optionsPreview"));
     optionsPreview_->setReadOnly(true);
+    optionsPreview_->setMaximumHeight(82);
     optionsPreview_->setPlaceholderText(QStringLiteral("点击“预览参数”查看当前配置"));
     singleToolsLayout->addWidget(previewButton);
     singleToolsLayout->addWidget(optionsPreview_);
-    layout->addWidget(singleFileTools_);
 
     auto* taskPages = new QStackedWidget(central);
     taskPages->setObjectName(QStringLiteral("taskPages"));
@@ -176,7 +203,7 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
     simulationStateLabel_ = new QLabel(QStringLiteral("尚未开始模拟任务。"), simulationGroup);
     simulationStateLabel_->setObjectName(QStringLiteral("simulationStateLabel"));
     simulationLayout->addWidget(simulationStateLabel_);
-    auto* realGroup = new QGroupBox(QStringLiteral("真实转码：原 FFmpegProject 后端"), taskPages);
+    auto* realGroup = new QGroupBox(QStringLiteral("单文件转码"), taskPages);
     auto* realLayout = new QVBoxLayout(realGroup);
     auto* realButtons = new QHBoxLayout;
     startRealButton_ = new QPushButton(QStringLiteral("开始真实转码"), realGroup);
@@ -238,18 +265,112 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
     taskPages->addWidget(batchWidget_);
     taskPages->addWidget(simulationGroup);
     taskPages->setCurrentWidget(realGroup);
-    layout->addWidget(taskPages, 1);
+    auto* workspace = new QHBoxLayout;
+    auto* singleSide = new QWidget(central);
+    singleSide->setObjectName(QStringLiteral("singleSideContents"));
+    auto* singleSideLayout = new QVBoxLayout(singleSide);
+    singleSideLayout->setContentsMargins(0, 0, 4, 0);
+    singleSideLayout->addWidget(singleFileControls_);
+    singleSideLayout->addWidget(singleFileTools_);
+    singleSideLayout->addStretch();
+    auto* sideScroll = new QScrollArea(central);
+    sideScroll->setObjectName(QStringLiteral("singleSidePanel"));
+    sideScroll->setWidgetResizable(true);
+    sideScroll->setFrameShape(QFrame::NoFrame);
+    sideScroll->setMinimumWidth(320);
+    sideScroll->setMaximumWidth(410);
+    sideScroll->setWidget(singleSide);
+    workspace->addWidget(sideScroll);
+    workspace->addWidget(taskPages, 1);
+    layout->addLayout(workspace, 1);
     connect(modeNavigation, &QTabBar::currentChanged, this,
-            [this, taskPages](int index) {
+            [this, taskPages, sideScroll](int index) {
         taskPages->setCurrentIndex(index);
         const bool batchTab = index == 1;
+        sideScroll->setVisible(!batchTab);
         singleFileControls_->setVisible(!batchTab);
         singleFileTools_->setVisible(!batchTab);
     });
     setCentralWidget(central);
+    central->setObjectName(QStringLiteral("appShell"));
+    setStyleSheet(QStringLiteral(R"(
+        QMainWindow, QWidget#appShell { background: #101827; color: #e8eef7; }
+        QScrollArea#singleSidePanel, QWidget#singleSideContents {
+            background: #101827; border: 0; }
+        QLabel, QGroupBox { color: #e8eef7; }
+        QLabel#appTitle { color: #f8fafc; }
+        QGroupBox { background: #192438; border: 1px solid #2d3c55; border-radius: 10px;
+                    margin-top: 13px; padding: 10px 12px 8px; font-weight: 600; }
+        QGroupBox::title { subcontrol-origin: margin; left: 14px; padding: 0 5px; }
+        QLineEdit, QComboBox, QDoubleSpinBox, QPlainTextEdit, QTableView {
+            background: #111b2c; color: #e8eef7; border: 1px solid #35455f;
+            border-radius: 6px; padding: 5px; selection-background-color: #3167bb; }
+        QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus, QPlainTextEdit:focus {
+            border-color: #6da8ff; }
+        QPushButton { background: #273a55; color: #e8eef7; border: 1px solid #395172;
+                      border-radius: 6px; padding: 7px 13px; }
+        QPushButton:hover { background: #345172; }
+        QPushButton:disabled { color: #8291a6; background: #202c3e; border-color: #29394f; }
+        QPushButton#startRealButton, QPushButton#batchStartButton {
+            background: #2563bf; border-color: #4183df; color: white; font-weight: 600; }
+        QPushButton#startRealButton:hover, QPushButton#batchStartButton:hover { background: #3477d5; }
+        QTabBar::tab { background: #1a2940; color: #b9c8dc; padding: 10px 22px;
+                       border: 1px solid #30415c; }
+        QTabBar::tab:selected { background: #285493; color: white; }
+        QProgressBar { background: #142034; color: #edf4ff; border: 1px solid #344968;
+                       border-radius: 6px; text-align: center; min-height: 18px; }
+        QProgressBar::chunk { background: #3986e5; border-radius: 5px; }
+        QHeaderView::section { background: #243652; color: #e8eef7; padding: 6px;
+                               border: 0; border-right: 1px solid #35455f; }
+        QStatusBar { background: #172337; color: #cbd8e9; }
+        QSplitter::handle { background: #35455f; }
+    )"));
     statusBar()->showMessage(QStringLiteral("准备就绪"));
 
     backend_ = new BackendProcess(this);
+    mediaProbe_ = new MediaProbe(this);
+    connect(mediaProbe_, &MediaProbe::ready, this,
+            [this](const QString& path, const MediaInfo& info) {
+        if (path != inputPathEdit_->text()) return;
+        const QString unknown = QStringLiteral("未知");
+        const QString duration = info.durationSeconds > 0
+            ? QStringLiteral("%1 秒").arg(QString::number(info.durationSeconds, 'f', 1)) : unknown;
+        const QString size = info.fileSizeBytes >= 0
+            ? QStringLiteral("%1 MiB").arg(QString::number(info.fileSizeBytes / 1048576.0, 'f', 2)) : unknown;
+        const QString dimensions = info.width > 0 && info.height > 0
+            ? QStringLiteral("%1 × %2").arg(info.width).arg(info.height) : unknown;
+        const QString fps = info.frameRate > 0
+            ? QStringLiteral("%1 fps").arg(QString::number(info.frameRate, 'f', 2)) : unknown;
+        mediaDetails_->setText(QStringLiteral("大小 %1  ·  容器 %2  ·  时长 %3\n视频 %4  ·  %5  ·  %6\n音频 %7  ·  %8 Hz  ·  %9 声道")
+            .arg(size, info.container.isEmpty() ? unknown : info.container, duration,
+                 info.videoCodec.isEmpty() ? unknown : info.videoCodec, dimensions, fps,
+                 info.hasAudio ? (info.audioCodec.isEmpty() ? unknown : info.audioCodec) : QStringLiteral("无音轨"),
+                 info.sampleRate > 0 ? QString::number(info.sampleRate) : unknown,
+                 info.channels > 0 ? QString::number(info.channels) : unknown));
+        mediaState_->setText(info.supported ? QStringLiteral("已分析 · 可尝试转码")
+            : QStringLiteral("已分析 · 当前转码要求同时包含视频和音频流"));
+    });
+    connect(mediaProbe_, &MediaProbe::failed, this,
+            [this](const QString& path, const QString& error) {
+        if (path != inputPathEdit_->text()) return;
+        mediaState_->setText(QStringLiteral("分析失败"));
+        mediaDetails_->setText(error);
+    });
+    connect(inputPathEdit_, &QLineEdit::textChanged, this, [this](const QString& path) {
+        inputPathEdit_->setToolTip(path);
+        mediaRetryButton_->setEnabled(!path.isEmpty());
+        mediaState_->setText(path.isEmpty() ? QStringLiteral("等待选择视频") : QStringLiteral("分析中…"));
+        mediaDetails_->setText(QStringLiteral("选择 MP4 文件后显示视频信息"));
+        mediaProbe_->inspect(path);
+    });
+    connect(mediaRetryButton_, &QPushButton::clicked, this, [this]() {
+        mediaState_->setText(QStringLiteral("分析中…"));
+        mediaDetails_->setText(QStringLiteral("正在重新读取视频信息"));
+        mediaProbe_->inspect(inputPathEdit_->text());
+    });
+    connect(outputPathEdit_, &QLineEdit::textChanged, this, [this](const QString& path) {
+        outputPathEdit_->setToolTip(path);
+    });
     simulationTimer_ = new QTimer(this);
     simulationTimer_->setInterval(200);
     connect(simulationTimer_, &QTimer::timeout, this, &MainWindow::advanceSimulation);

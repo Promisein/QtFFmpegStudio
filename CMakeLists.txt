@@ -16,6 +16,7 @@ include(CTest)
 
 set(FFMPEG_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../FFmpegProject/ffmpeg-4.4-full_build-shared"
         CACHE PATH "FFmpeg 4.4 shared SDK")
+configure_file("${FFMPEG_ROOT}/bin/ffprobe.exe" "${CMAKE_BINARY_DIR}/ffprobe.exe" COPYONLY)
 
 set(BACKEND_SOURCES
         backend/main.cpp
@@ -71,6 +72,8 @@ add_executable(QtFFmpegStudio
         main.cpp
         src/mainwindow.h
         src/mainwindow.cpp
+        src/mediaprobe.h
+        src/mediaprobe.cpp
         src/transcodeoptions.h
         src/backendprocess.h
         src/backendprocess.cpp
@@ -93,6 +96,8 @@ if (BUILD_TESTING)
             tests/test_options.cpp
             src/mainwindow.h
             src/mainwindow.cpp
+            src/mediaprobe.h
+            src/mediaprobe.cpp
             src/backendprocess.h
             src/backendprocess.cpp
             src/batchtaskmodel.h
@@ -108,6 +113,8 @@ if (BUILD_TESTING)
             tests/test_simulation.cpp
             src/mainwindow.h
             src/mainwindow.cpp
+            src/mediaprobe.h
+            src/mediaprobe.cpp
             src/backendprocess.h
             src/backendprocess.cpp
             src/batchtaskmodel.h
@@ -123,6 +130,8 @@ if (BUILD_TESTING)
             tests/test_real_transcode.cpp
             src/mainwindow.h
             src/mainwindow.cpp
+            src/mediaprobe.h
+            src/mediaprobe.cpp
             src/backendprocess.h
             src/backendprocess.cpp
             src/batchtaskmodel.h
@@ -141,6 +150,8 @@ if (BUILD_TESTING)
             tests/test_engineering.cpp
             src/mainwindow.h
             src/mainwindow.cpp
+            src/mediaprobe.h
+            src/mediaprobe.cpp
             src/backendprocess.h
             src/backendprocess.cpp
             src/batchtaskmodel.h
@@ -179,6 +190,8 @@ if (BUILD_TESTING)
             tests/test_batch_integration.cpp
             src/mainwindow.h
             src/mainwindow.cpp
+            src/mediaprobe.h
+            src/mediaprobe.cpp
             src/batchwidget.h
             src/batchwidget.cpp
             src/batchtaskmodel.h
@@ -192,6 +205,20 @@ if (BUILD_TESTING)
     add_dependencies(QtFFmpegStudio_batch_integration_tests FFmpegProjectBackend)
     add_test(NAME batch_integration COMMAND QtFFmpegStudio_batch_integration_tests)
     set_tests_properties(batch_integration PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=windows")
+    add_executable(QtFFmpegStudio_media_probe_tests
+            tests/test_media_probe.cpp
+            src/mainwindow.h src/mainwindow.cpp
+            src/mediaprobe.h src/mediaprobe.cpp
+            src/backendprocess.h src/backendprocess.cpp
+            src/batchtaskmodel.h src/batchtaskmodel.cpp
+            src/batchwidget.h src/batchwidget.cpp)
+    target_include_directories(QtFFmpegStudio_media_probe_tests PRIVATE src)
+    target_link_libraries(QtFFmpegStudio_media_probe_tests PRIVATE Qt6::Widgets Qt6::Test)
+    target_compile_definitions(QtFFmpegStudio_media_probe_tests PRIVATE
+            FFMPEG_TEST_TOOL="${FFMPEG_ROOT}/bin/ffmpeg.exe")
+    add_dependencies(QtFFmpegStudio_media_probe_tests FFmpegProjectBackend)
+    add_test(NAME media_probe COMMAND QtFFmpegStudio_media_probe_tests)
+    set_tests_properties(media_probe PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=windows")
     add_executable(QtFFmpegStudio_safe_output_tests
             tests/test_safe_output.cpp
             backend/include/safe_output.h
@@ -219,7 +246,7 @@ if (BUILD_TESTING)
             list(APPEND TEST_ENVIRONMENT_MODIFICATIONS
                     "PATH=path_list_prepend:${MINGW_RUNTIME_DIR}")
         endif ()
-        set_tests_properties(options_preview simulated_task real_transcode
+        set_tests_properties(options_preview simulated_task real_transcode media_probe
                 engineering_settings batch_model batch_queue batch_integration safe_output
                 transcode_progress_parser mux_progress
                 PROPERTIES ENVIRONMENT_MODIFICATION "${TEST_ENVIRONMENT_MODIFICATIONS}")

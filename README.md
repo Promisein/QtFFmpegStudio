@@ -40,6 +40,14 @@ ctest --test-dir build --output-on-failure
 
 构建后运行 `build/QtFFmpegStudio.exe`。`FFmpegProjectBackend.exe` 和所需 DLL 会复制到构建目录。也可以在 CLion 中配置相同的 CMake 选项，构建并运行 `QtFFmpegStudio` 目标。
 
+## 转码正确性验证
+
+```powershell
+powershell -File .\scripts\verify_transcode_correctness.ps1 -BuildDirectory .\build -FfmpegRoot D:\path\to\ffmpeg-4.4-full_build-shared
+```
+
+脚本在构建目录生成测试视频，检查普通转码、顺时针旋转、0.5x/2x 倍速和 60 秒素材的音视频时长、编码、完整解码、静音片段与旋转方向。结果保存在构建目录的 `correctness-日期时间/` 下。具体测试数据与范围见[验证记录](verification/2026-10-26-transcode-correctness.md)。
+
 ## 打包
 
 ```powershell
@@ -56,5 +64,6 @@ powershell -File .\scripts\package.ps1 -BuildDirectory .\build -QtBin D:\Qt\6.8.
 | `backend/` | FFmpeg 转码流水线及独立进程入口 |
 | `tests/` | Qt 界面、批量队列、真实转码与输出保护测试 |
 | `scripts/` | Windows 打包脚本 |
+| `verification/` | 可复现的输出正确性记录与已知边界 |
 
 `input/`、`output/`、`dist/` 和构建目录属于本地数据或产物，不提交到仓库。

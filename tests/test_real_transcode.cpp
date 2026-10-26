@@ -8,6 +8,9 @@
 #include <QDir>
 #include <QLabel>
 #include <QLineEdit>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QProgressBar>
@@ -30,6 +33,7 @@ private slots:
     void backendEmitsStructuredProgressAndHumanLog();
     void backendRejectsUnownedTemporaryOutput();
     void backendRejectsHardlinkAlias();
+    void aacInputToAc3KeepsAudioAndVideoDurationsAligned();
 };
 
 static bool makeFixture(const QString& target, int duration = 1)
@@ -47,6 +51,45 @@ static bool makeFixture(const QString& target, int duration = 1)
     };
     return QProcess::execute(QString::fromUtf8(FFMPEG_TEST_TOOL), arguments) == 0
         && QFileInfo(target).size() > 0;
+}
+
+void RealTranscodeTest::aacInputToAc3KeepsAudioAndVideoDurationsAligned()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("四秒输入.mp4"));
+    const QString output = directory.filePath(QStringLiteral("ac3输出.mp4"));
+    QVERIFY(makeFixture(input, 4));
+
+    const QString backend = QDir(QCoreApplication::applicationDirPath())
+        .filePath(QStringLiteral("FFmpegProjectBackend.exe"));
+    QCOMPARE(QProcess::execute(backend, {QStringLiteral("-i"), input,
+                                         QStringLiteral("-o"), output,
+                                         QStringLiteral("-vcodec"), QStringLiteral("mpeg4"),
+                                         QStringLiteral("-acodec"), QStringLiteral("ac3")}), 0);
+
+    const QString ffprobe = QFileInfo(QString::fromUtf8(FFMPEG_TEST_TOOL)).dir()
+        .filePath(QStringLiteral("ffprobe.exe"));
+    QProcess probe;
+    probe.start(ffprobe, {QStringLiteral("-v"), QStringLiteral("error"),
+                          QStringLiteral("-show_entries"), QStringLiteral("stream=codec_type,duration"),
+                          QStringLiteral("-of"), QStringLiteral("json"), output});
+    QVERIFY(probe.waitForFinished(10000));
+    QCOMPARE(probe.exitCode(), 0);
+    const QJsonArray streams = QJsonDocument::fromJson(probe.readAllStandardOutput())
+        .object().value(QStringLiteral("streams")).toArray();
+    double videoDuration = -1;
+    double audioDuration = -1;
+    for (const QJsonValue& value : streams) {
+        const QJsonObject stream = value.toObject();
+        const double duration = stream.value(QStringLiteral("duration")).toString().toDouble();
+        if (stream.value(QStringLiteral("codec_type")) == QStringLiteral("video")) videoDuration = duration;
+        if (stream.value(QStringLiteral("codec_type")) == QStringLiteral("audio")) audioDuration = duration;
+    }
+    QVERIFY(videoDuration > 3.8 && videoDuration < 4.2);
+    QVERIFY2(audioDuration > 3.8 && audioDuration < 4.2,
+             qPrintable(QStringLiteral("audio duration=%1 s").arg(audioDuration)));
+    QVERIFY(qAbs(videoDuration - audioDuration) < 0.2);
 }
 
 void RealTranscodeTest::validMediaProducesFileAndUtf8Log()

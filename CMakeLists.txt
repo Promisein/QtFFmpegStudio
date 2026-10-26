@@ -68,8 +68,7 @@ if (MINGW)
             "$<TARGET_FILE_DIR:FFmpegProjectBackend>")
 endif ()
 
-add_executable(QtFFmpegStudio
-        main.cpp
+add_library(QtFFmpegStudioGui STATIC
         src/mainwindow.h
         src/mainwindow.cpp
         src/mediaprobe.h
@@ -82,138 +81,54 @@ add_executable(QtFFmpegStudio
         src/batchwidget.h
         src/batchwidget.cpp
 )
-target_include_directories(QtFFmpegStudio PRIVATE src)
-target_link_libraries(QtFFmpegStudio
-        Qt::Core
-        Qt::Gui
-        Qt::Widgets
-)
+target_include_directories(QtFFmpegStudioGui PUBLIC src)
+target_link_libraries(QtFFmpegStudioGui PUBLIC Qt::Core Qt::Gui Qt::Widgets)
+
+add_executable(QtFFmpegStudio main.cpp)
+target_link_libraries(QtFFmpegStudio PRIVATE QtFFmpegStudioGui)
 add_dependencies(QtFFmpegStudio FFmpegProjectBackend)
 
 if (BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
-    add_executable(QtFFmpegStudio_options_tests
-            tests/test_options.cpp
-            src/mainwindow.h
-            src/mainwindow.cpp
-            src/mediaprobe.h
-            src/mediaprobe.cpp
-            src/backendprocess.h
-            src/backendprocess.cpp
-            src/batchtaskmodel.h
-            src/batchtaskmodel.cpp
-            src/batchwidget.h
-            src/batchwidget.cpp
-    )
-    target_include_directories(QtFFmpegStudio_options_tests PRIVATE src)
-    target_link_libraries(QtFFmpegStudio_options_tests PRIVATE Qt6::Widgets Qt6::Test)
+    add_executable(QtFFmpegStudio_options_tests tests/test_options.cpp)
+    target_link_libraries(QtFFmpegStudio_options_tests PRIVATE QtFFmpegStudioGui Qt6::Test)
     add_test(NAME options_preview COMMAND QtFFmpegStudio_options_tests)
     set_tests_properties(options_preview PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=windows")
-    add_executable(QtFFmpegStudio_simulation_tests
-            tests/test_simulation.cpp
-            src/mainwindow.h
-            src/mainwindow.cpp
-            src/mediaprobe.h
-            src/mediaprobe.cpp
-            src/backendprocess.h
-            src/backendprocess.cpp
-            src/batchtaskmodel.h
-            src/batchtaskmodel.cpp
-            src/batchwidget.h
-            src/batchwidget.cpp
-    )
-    target_include_directories(QtFFmpegStudio_simulation_tests PRIVATE src)
-    target_link_libraries(QtFFmpegStudio_simulation_tests PRIVATE Qt6::Widgets Qt6::Test)
+    add_executable(QtFFmpegStudio_simulation_tests tests/test_simulation.cpp)
+    target_link_libraries(QtFFmpegStudio_simulation_tests PRIVATE QtFFmpegStudioGui Qt6::Test)
     add_test(NAME simulated_task COMMAND QtFFmpegStudio_simulation_tests)
     set_tests_properties(simulated_task PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=windows")
-    add_executable(QtFFmpegStudio_real_tests
-            tests/test_real_transcode.cpp
-            src/mainwindow.h
-            src/mainwindow.cpp
-            src/mediaprobe.h
-            src/mediaprobe.cpp
-            src/backendprocess.h
-            src/backendprocess.cpp
-            src/batchtaskmodel.h
-            src/batchtaskmodel.cpp
-            src/batchwidget.h
-            src/batchwidget.cpp
-    )
-    target_include_directories(QtFFmpegStudio_real_tests PRIVATE src)
-    target_link_libraries(QtFFmpegStudio_real_tests PRIVATE Qt6::Widgets Qt6::Test)
+    add_executable(QtFFmpegStudio_real_tests tests/test_real_transcode.cpp)
+    target_link_libraries(QtFFmpegStudio_real_tests PRIVATE QtFFmpegStudioGui Qt6::Test)
     target_compile_definitions(QtFFmpegStudio_real_tests PRIVATE
             FFMPEG_TEST_TOOL="${FFMPEG_ROOT}/bin/ffmpeg.exe")
     add_dependencies(QtFFmpegStudio_real_tests FFmpegProjectBackend)
     add_test(NAME real_transcode COMMAND QtFFmpegStudio_real_tests)
     set_tests_properties(real_transcode PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=windows")
-    add_executable(QtFFmpegStudio_engineering_tests
-            tests/test_engineering.cpp
-            src/mainwindow.h
-            src/mainwindow.cpp
-            src/mediaprobe.h
-            src/mediaprobe.cpp
-            src/backendprocess.h
-            src/backendprocess.cpp
-            src/batchtaskmodel.h
-            src/batchtaskmodel.cpp
-            src/batchwidget.h
-            src/batchwidget.cpp
-    )
-    target_include_directories(QtFFmpegStudio_engineering_tests PRIVATE src)
-    target_link_libraries(QtFFmpegStudio_engineering_tests PRIVATE Qt6::Widgets Qt6::Test)
+    add_executable(QtFFmpegStudio_engineering_tests tests/test_engineering.cpp)
+    target_link_libraries(QtFFmpegStudio_engineering_tests PRIVATE QtFFmpegStudioGui Qt6::Test)
     add_test(NAME engineering_settings COMMAND QtFFmpegStudio_engineering_tests)
     set_tests_properties(engineering_settings PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=windows")
-    add_executable(QtFFmpegStudio_batch_model_tests
-            tests/test_batch_model.cpp
-            src/batchtaskmodel.h
-            src/batchtaskmodel.cpp)
-    target_include_directories(QtFFmpegStudio_batch_model_tests PRIVATE src)
-    target_link_libraries(QtFFmpegStudio_batch_model_tests PRIVATE Qt6::Widgets Qt6::Test)
+    add_executable(QtFFmpegStudio_batch_model_tests tests/test_batch_model.cpp)
+    target_link_libraries(QtFFmpegStudio_batch_model_tests PRIVATE QtFFmpegStudioGui Qt6::Test)
     add_test(NAME batch_model COMMAND QtFFmpegStudio_batch_model_tests)
     set_tests_properties(batch_model PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=windows")
-    add_executable(QtFFmpegStudio_batch_widget_tests
-            tests/test_batch_widget.cpp
-            src/batchwidget.h
-            src/batchwidget.cpp
-            src/batchtaskmodel.h
-            src/batchtaskmodel.cpp
-            src/backendprocess.h
-            src/backendprocess.cpp)
-    target_include_directories(QtFFmpegStudio_batch_widget_tests PRIVATE src)
-    target_link_libraries(QtFFmpegStudio_batch_widget_tests PRIVATE Qt6::Widgets Qt6::Test)
+    add_executable(QtFFmpegStudio_batch_widget_tests tests/test_batch_widget.cpp)
+    target_link_libraries(QtFFmpegStudio_batch_widget_tests PRIVATE QtFFmpegStudioGui Qt6::Test)
     target_compile_definitions(QtFFmpegStudio_batch_widget_tests PRIVATE
             FFMPEG_TEST_TOOL="${FFMPEG_ROOT}/bin/ffmpeg.exe")
     add_dependencies(QtFFmpegStudio_batch_widget_tests FFmpegProjectBackend)
     add_test(NAME batch_queue COMMAND QtFFmpegStudio_batch_widget_tests)
     set_tests_properties(batch_queue PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=windows")
-    add_executable(QtFFmpegStudio_batch_integration_tests
-            tests/test_batch_integration.cpp
-            src/mainwindow.h
-            src/mainwindow.cpp
-            src/mediaprobe.h
-            src/mediaprobe.cpp
-            src/batchwidget.h
-            src/batchwidget.cpp
-            src/batchtaskmodel.h
-            src/batchtaskmodel.cpp
-            src/backendprocess.h
-            src/backendprocess.cpp)
-    target_include_directories(QtFFmpegStudio_batch_integration_tests PRIVATE src)
-    target_link_libraries(QtFFmpegStudio_batch_integration_tests PRIVATE Qt6::Widgets Qt6::Test)
+    add_executable(QtFFmpegStudio_batch_integration_tests tests/test_batch_integration.cpp)
+    target_link_libraries(QtFFmpegStudio_batch_integration_tests PRIVATE QtFFmpegStudioGui Qt6::Test)
     target_compile_definitions(QtFFmpegStudio_batch_integration_tests PRIVATE
             FFMPEG_TEST_TOOL="${FFMPEG_ROOT}/bin/ffmpeg.exe")
     add_dependencies(QtFFmpegStudio_batch_integration_tests FFmpegProjectBackend)
     add_test(NAME batch_integration COMMAND QtFFmpegStudio_batch_integration_tests)
     set_tests_properties(batch_integration PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=windows")
-    add_executable(QtFFmpegStudio_media_probe_tests
-            tests/test_media_probe.cpp
-            src/mainwindow.h src/mainwindow.cpp
-            src/mediaprobe.h src/mediaprobe.cpp
-            src/backendprocess.h src/backendprocess.cpp
-            src/batchtaskmodel.h src/batchtaskmodel.cpp
-            src/batchwidget.h src/batchwidget.cpp)
-    target_include_directories(QtFFmpegStudio_media_probe_tests PRIVATE src)
-    target_link_libraries(QtFFmpegStudio_media_probe_tests PRIVATE Qt6::Widgets Qt6::Test)
+    add_executable(QtFFmpegStudio_media_probe_tests tests/test_media_probe.cpp)
+    target_link_libraries(QtFFmpegStudio_media_probe_tests PRIVATE QtFFmpegStudioGui Qt6::Test)
     target_compile_definitions(QtFFmpegStudio_media_probe_tests PRIVATE
             FFMPEG_TEST_TOOL="${FFMPEG_ROOT}/bin/ffmpeg.exe")
     add_dependencies(QtFFmpegStudio_media_probe_tests FFmpegProjectBackend)

@@ -49,7 +49,7 @@ flowchart TB
     end
 ```
 
-`MainWindow` 处理单文件操作；`BatchWidget` 与 `BatchTaskModel` 管理队列状态；`BackendProcess` 负责进程启动、输出解析和取消。每个后端任务拥有独立的音视频队列与六个流水线线程。后端通过标准输出发送结构化进度和日志，GUI 异步更新界面。取消和失败时清理本次任务的临时输出，成功后再发布最终文件。
+`MainWindow` 处理单文件操作；`BatchWidget` 与 `BatchTaskModel` 管理队列状态；`BackendProcess` 负责进程启动、输出解析和取消。GUI 实现集中在 `QtFFmpegStudioGui` 静态库，由主程序和相关测试共同链接，避免同一批源文件重复编译。每个后端任务拥有独立的音视频队列与六个流水线线程。后端通过标准输出发送结构化进度和日志，GUI 异步更新界面。取消和失败时清理本次任务的临时输出，成功后再发布最终文件。
 
 线程池属于原 `FFmpegProject` CLI 的文件级并发设计：固定 worker 从任务队列领取文件，每个文件再运行自己的六线程流水线。当前 Qt GUI 的批量并发由 `BatchWidget` 限制后端进程数量；仓库中保留了 `backend/src/thread_pool.cpp`，但 `backend/main.cpp` 当前没有实例化 `ThreadPool`。图中将两个独立入口分别标出，避免把 GUI 的进程调度画成线程池。
 

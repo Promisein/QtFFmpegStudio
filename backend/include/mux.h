@@ -1,0 +1,24 @@
+//
+// Created by Jianing on 2025/12/22.
+//
+
+#ifndef FFMPEGPROJECT_MUX_H
+#define FFMPEGPROJECT_MUX_H
+
+#include <string>
+#include "common.h"
+#include "config.h"
+struct AVCodecParameters;
+
+// 复用线程（入参：输出文件路径、视频/音频编码参数、输出时间基、输入队列、处理配置）
+void mux_thread(const std::string& output_file,
+                AVCodecParameters* video_enc_par,
+                AVCodecParameters* audio_enc_par,
+                AVRational output_time_base,
+                double expected_output_duration_seconds,
+                DeepCopyPacketQueue& video_q,
+                DeepCopyPacketQueue& audio_q,
+                const ProcessingConfig& config,
+                Pipeline* pipeline);
+
+#endif //FFMPEGPROJECT_MUX_H

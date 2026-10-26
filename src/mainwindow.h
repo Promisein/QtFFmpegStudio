@@ -1,0 +1,92 @@
+#ifndef QTFFMPEGSTUDIO_MAINWINDOW_H
+#define QTFFMPEGSTUDIO_MAINWINDOW_H
+
+#include <QMainWindow>
+#include <QElapsedTimer>
+#include <QString>
+
+#include "transcodeoptions.h"
+
+// 头文件里只保存指针，因此先声明类，具体头文件放在 cpp 中。
+class QLabel;
+class QLineEdit;
+class QComboBox;
+class QDoubleSpinBox;
+class QPlainTextEdit;
+class QProgressBar;
+class QPushButton;
+class QGroupBox;
+class QTimer;
+class QCloseEvent;
+class BackendProcess;
+class BatchWidget;
+class QSettings;
+class QWidget;
+
+class MainWindow : public QMainWindow
+{
+    Q_OBJECT
+
+public:
+    explicit MainWindow(QWidget* parent = nullptr, const QString& settingsFile = {});
+    TranscodeOptions readOptions() const;
+
+protected:
+    void closeEvent(QCloseEvent* event) override;
+
+private slots:
+    void selectInputFile();
+    void selectOutputFile();
+    void checkPaths();
+    void showOptionsPreview();
+    void startSimulation();
+    void stopSimulation();
+    void advanceSimulation();
+    void startRealTranscode();
+    void cancelRealTranscode();
+    void openOutputFolder();
+
+private:
+    bool validatePaths();
+    enum class TaskState { Idle, Simulating, Transcoding, Cancelling,
+                           BatchRunning, BatchCancelling };
+    void setTaskState(TaskState state);
+    void loadSettings();
+    void saveSettings();
+
+    QLineEdit* inputPathEdit_ = nullptr;
+    QWidget* singleFileControls_ = nullptr;
+    QWidget* singleFileTools_ = nullptr;
+    QLineEdit* outputPathEdit_ = nullptr;
+    QPushButton* inputButton_ = nullptr;
+    QPushButton* outputButton_ = nullptr;
+    QPushButton* checkButton_ = nullptr;
+    QLabel* feedbackLabel_ = nullptr;
+    QGroupBox* optionsGroup_ = nullptr;
+    QComboBox* rotationCombo_ = nullptr;
+    QDoubleSpinBox* speedSpin_ = nullptr;
+    QComboBox* videoCodecCombo_ = nullptr;
+    QComboBox* audioCodecCombo_ = nullptr;
+    QPlainTextEdit* optionsPreview_ = nullptr;
+    QPushButton* startSimulationButton_ = nullptr;
+    QPushButton* stopSimulationButton_ = nullptr;
+    QProgressBar* simulationProgress_ = nullptr;
+    QLabel* simulationStateLabel_ = nullptr;
+    QTimer* simulationTimer_ = nullptr;
+    BackendProcess* backend_ = nullptr;
+    BatchWidget* batchWidget_ = nullptr;
+    QPushButton* startRealButton_ = nullptr;
+    QPushButton* cancelRealButton_ = nullptr;
+    QPushButton* openOutputFolderButton_ = nullptr;
+    QPlainTextEdit* realLog_ = nullptr;
+    QProgressBar* realTranscodeProgress_ = nullptr;
+    QLabel* realStateLabel_ = nullptr;
+    QLabel* realElapsedLabel_ = nullptr;
+    QElapsedTimer realElapsedTimer_;
+    bool closeAfterCancel_ = false;
+    TaskState taskState_ = TaskState::Idle;
+    QSettings* settings_ = nullptr;
+    QString lastSuccessfulOutput_;
+};
+
+#endif

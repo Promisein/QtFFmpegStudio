@@ -41,7 +41,7 @@ flowchart LR
 
 ## 构建与运行
 
-当前项目面向 Windows，已在 Windows 11、CMake 3.27+、Qt 6.8.3 Widgets、Qt 配套 MinGW 13.1 和 FFmpeg 4.4 shared SDK 上构建与测试。SDK 需要包含 `include/`、`lib/`、`bin/ffprobe.exe` 和 `bin/ffmpeg.exe`。第三方文件不在源码仓库中。
+当前项目面向 Windows，已在 Windows 11、CMake 3.27+、Ninja、Qt 6.8.3 Widgets、Qt 配套 MinGW 13.1 和 FFmpeg 4.4 shared SDK 上构建与测试。`ninja.exe` 需要在 `PATH` 中，也可通过 `-DCMAKE_MAKE_PROGRAM=...` 指定 CLion 自带的 Ninja。SDK 需要包含 `include/`、`lib/`、`bin/ffprobe.exe` 和 `bin/ffmpeg.exe`。第三方文件不在源码仓库中。
 
 以下命令中的路径请改成实际安装位置。`FFMPEG_ROOT` 未指定时默认查找 `../FFmpegProject/ffmpeg-4.4-full_build-shared`。
 
@@ -72,7 +72,7 @@ powershell -File .\scripts\verify_transcode_correctness.ps1 -BuildDirectory .\bu
 powershell -File .\scripts\package.ps1 -BuildDirectory .\build -QtBin D:\Qt\6.8.3\mingw_64\bin -MinGWBin D:\Qt\Tools\mingw1310_64\bin
 ```
 
-脚本调用 `windeployqt`，将 GUI、后端、`ffprobe.exe` 及运行依赖放入 `dist/QtFFmpegStudio-日期时间/`。源码仓库不包含构建和打包产物；请在目标 Windows 机器上单独验证打包结果。打包后的可执行文件为 `QtFFmpegStudio.exe`。
+脚本调用 `windeployqt`，将 GUI、后端、`ffprobe.exe` 及运行依赖放入 `dist/QtFFmpegStudio-日期时间/`。源码仓库不包含构建和打包产物；请在目标 Windows 机器上单独验证打包结果。打包后的可执行文件为 `QtFFmpegStudio.exe`。本机全新检出构建与候选包烟测记录见[交付检查](verification/2026-10-26-v1-showcase.md)。
 
 ## 仓库目录
 

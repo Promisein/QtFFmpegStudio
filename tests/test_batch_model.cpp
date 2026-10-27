@@ -36,6 +36,7 @@ void BatchModelTest::createsDistinctOutputsAndSnapshotsOptions()
     BatchTaskModel model;
     TranscodeOptions options;
     options.speedRatio = 1.5;
+    options.videoBackend = QStringLiteral("nvenc");
     QCOMPARE(model.addFiles({input}, directory.path(), options), 1);
     QCOMPARE(model.rowCount(), 1);
     QCOMPARE(model.columnCount(), 5);
@@ -47,8 +48,11 @@ void BatchModelTest::createsDistinctOutputsAndSnapshotsOptions()
     QVERIFY(model.data(model.index(0, 1), Qt::ToolTipRole).toString()
             .contains(task.options.outputPath));
     QCOMPARE(task.options.speedRatio, 1.5);
+    QCOMPARE(task.options.videoBackend, QStringLiteral("nvenc"));
     options.speedRatio = 2.0;
+    options.videoBackend = QStringLiteral("software");
     QCOMPARE(model.task(0).options.speedRatio, 1.5);
+    QCOMPARE(model.task(0).options.videoBackend, QStringLiteral("nvenc"));
     QCOMPARE(model.nextPendingIndex(), 0);
 }
 

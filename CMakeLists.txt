@@ -74,6 +74,7 @@ add_library(QtFFmpegStudioGui STATIC
         src/mediaprobe.h
         src/mediaprobe.cpp
         src/transcodeoptions.h
+        src/muxperformance.h
         src/backendprocess.h
         src/backendprocess.cpp
         src/batchtaskmodel.h
@@ -92,6 +93,7 @@ if (BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
     add_executable(QtFFmpegStudio_options_tests tests/test_options.cpp)
     target_link_libraries(QtFFmpegStudio_options_tests PRIVATE QtFFmpegStudioGui Qt6::Test)
+    add_dependencies(QtFFmpegStudio_options_tests FFmpegProjectBackend)
     add_test(NAME options_preview COMMAND QtFFmpegStudio_options_tests)
     set_tests_properties(options_preview PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=windows")
     add_executable(QtFFmpegStudio_simulation_tests tests/test_simulation.cpp)

@@ -103,10 +103,32 @@ void video_decode_thread(AVCodecParameters* codec_par,
     AVPacket pkt;
     FramePtr frame(av_frame_alloc());
     int frame_count = 0;
+    bool sent_flush = false;
+
+    auto queue_decoded_frame = [&] {
+        frame_count++;
+        if (pipeline) pipeline->video_decoded_frames++;
+        if (frame_count % 100 == 0) {
+            Logger::debug("VideoDecoder", std::string("解码YUV帧: pts=")
+                          + std::to_string(frame->pts) + " width=" + std::to_string(frame->width)
+                          + " height=" + std::to_string(frame->height));
+        }
+#if ENABLE_YUV_OUTPUT
+        if (frame->format == AV_PIX_FMT_YUV420P) {
+            yuv_writer.write_frame(frame.get());
+        } else if (frame_count % 10 == 0) {
+            std::cout << "[Info] 非YUV420P格式(" << frame->format
+                      << ")，跳过YUV文件写入\n";
+        }
+#endif
+        out_rb.push(frame.get());
+        av_frame_unref(frame.get());
+    };
 
     while (in_queue.pop(pkt)) {
         if (!pkt.data) {
-            avcodec_send_packet(codec_ctx.get(), nullptr);
+            sent_flush = avcodec_send_packet(codec_ctx.get(), nullptr) >= 0;
+            if (!sent_flush && pipeline) pipeline->report_error("[VideoDecoder] 刷新解码器失败");
             break;
         }
 
@@ -117,28 +139,21 @@ void video_decode_thread(AVCodecParameters* codec_par,
         }
 
         while (avcodec_receive_frame(codec_ctx.get(), frame.get()) >= 0) {
-            frame_count++;
-            if (pipeline) pipeline->video_decoded_frames++;
-            if (frame_count % 100 == 0) {
-                Logger::debug("VideoDecoder", std::string("解码YUV帧: pts=")
-                              + std::to_string(frame->pts) + " width=" + std::to_string(frame->width)
-                              + " height=" + std::to_string(frame->height));
-            }
-
-#if ENABLE_YUV_OUTPUT
-            if (frame->format == AV_PIX_FMT_YUV420P) {
-                yuv_writer.write_frame(frame.get());
-            } else {
-                if (frame_count % 10 == 0) {
-                    std::cout << "[Info] 非YUV420P格式(" << frame->format
-                              << ")，跳过YUV文件写入\n";
-                }
-            }
-#endif
-            out_rb.push(frame.get());
-            av_frame_unref(frame.get());
+            queue_decoded_frame();
         }
         av_packet_unref(&pkt);
+    }
+
+    if (sent_flush) {
+        while (true) {
+            const int ret = avcodec_receive_frame(codec_ctx.get(), frame.get());
+            if (ret == AVERROR_EOF) break;
+            if (ret < 0) {
+                if (pipeline) pipeline->report_error("[VideoDecoder] 读取刷新帧失败");
+                break;
+            }
+            queue_decoded_frame();
+        }
     }
 
     out_rb.flush();

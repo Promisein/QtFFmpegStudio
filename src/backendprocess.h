@@ -7,6 +7,7 @@
 
 #include "transcodeoptions.h"
 #include "transcodeprogressparser.h"
+#include "muxperformance.h"
 
 class QProcess;
 
@@ -23,6 +24,7 @@ public:
 signals:
     void logReceived(const QString& text);
     void transcodeProgressChanged(int percent);
+    void muxPerformanceReady(const MuxPerformance& performance);
     void finished(bool success, const QString& message);
 
 private:

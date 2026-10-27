@@ -12,8 +12,8 @@
 
 1. 在“单文件转码”页选择带视频和音频流的 MP4，等待视频信息分析完成。
 2. 选择输出 `.mp4` 路径，设置旋转、倍速及音视频编码器，点击“开始真实转码”。
-3. 查看整体估算进度、耗时和日志；任务成功结束后可以打开输出目录。
-4. 批量处理时切到“批量队列”，设置输出目录，添加多个 MP4，选择同时运行的任务数（1～3），再启动队列。点击任务行可以查看该任务日志。
+3. 查看整体估算进度、耗时和日志；成功后“本次转码结果”显示编码设备、处理速度、输出大小及 mux 耗时分布，并可打开输出目录。
+4. 批量处理时切到“批量队列”，设置输出目录，添加多个 MP4，选择同时运行的任务数（1～3），再启动队列。点击任务行可查看该任务的保存设置、结果和日志。
 
 ## 功能
 
@@ -24,6 +24,8 @@
 - 复制、清空日志，保存常用设置；单文件成功后可打开输出目录。
 
 **支持范围：**当前处理带视频和音频流的 MP4，输出为 MP4；支持 MPEG-4/H.264 视频和 AC-3/AAC 音频输出。无音轨视频、其他容器、多音轨选择和字幕处理尚未实现。倍速通过采样选择改变播放时长，也会改变音调。进度依据封装阶段时间戳估算，运行中最高显示 99%，成功完成后显示 100%。
+
+画质可选原有默认、高画质、均衡、小体积或指定视频目标码率。目标码率控制的是视频编码，实际文件大小还受素材内容、音频码率和封装开销影响，不保证精确大小。分辨率可保持原尺寸，或将旋转后的短边限制为 720 / 1080 像素，按比例缩小且不放大小尺寸素材。帧率可保持原始值或设为 24 / 25 / 30 / 60 fps；指定帧率时按输入帧率和播放倍速选取或复制帧。当前以输入流标称帧率采样，变帧率素材的逐帧时间间隔不予保留。新设置在添加批量任务时随任务保存。
 
 ## 实现结构
 
@@ -68,6 +70,16 @@ ctest --test-dir build --output-on-failure --parallel 4
 
 构建后运行 `build/QtFFmpegStudio.exe`。`FFmpegProjectBackend.exe`、`ffprobe.exe` 和所需 DLL 会复制到构建目录。也可以在 CLion 中配置相同的 CMake 选项，构建并运行 `QtFFmpegStudio` 目标。
 
+### NVENC H.264 第一阶段
+
+独立后端可用 `-vbackend nvenc` 选择 NVIDIA 硬件编码；视频编码格式须同时指定为 H.264。默认 `-vbackend software`，原 MPEG-4/H.264 软件编码路径继续可用。
+
+```powershell
+.\build\FFmpegProjectBackend.exe -i .\input\input.mp4 -o .\output\nvenc.mp4 -vcodec h264 -vbackend nvenc -acodec aac -rotate 90 -speed 2
+```
+
+本阶段保留 CPU 解码、旋转、倍速和音频处理。Qt 界面的“视频编码设备”可选 CPU（软件编码）或 GPU（NVIDIA NVENC）；选择 GPU 时自动使用 H.264，选择 MPEG-4 时自动切回 CPU。设备选项旁显示 NVENC 可用性，点击“重新检测”会让独立后端尝试初始化 `h264_nvenc`。检测结果仅反映检测时的环境；即使检测失败，GPU 选项仍可选，以便环境恢复后重试。单文件和批量任务都通过现有 QProcess 向独立后端传递选择。运行需要支持 NVENC 的 NVIDIA 显卡、驱动及包含 `h264_nvenc` 的 FFmpeg 库，不需要为此单独安装 CUDA Toolkit。
+
 ## 验证
 
 项目使用 Qt Test / CTest 覆盖参数、媒体分析、单文件与批量转码、取消、输出保护、进度和日志。当前测试列表为 11 项；请在自己的构建环境运行上面的 `ctest` 命令确认结果。
@@ -79,6 +91,8 @@ powershell -File .\scripts\verify_transcode_correctness.ps1 -BuildDirectory .\bu
 ```
 
 脚本使用 FFmpeg 生成合成素材；结果保存在构建目录的 `correctness-日期时间/` 下。测量结果与适用范围见[转码正确性验证记录](verification/2026-10-26-transcode-correctness.md)。这些自动检查不能代替真实视频的人工试听、播放和另一台 Windows 电脑上的分发包验收。
+
+后端日志现在会显示 mux 等待音视频包、写包和固定休眠等耗时。可复现的 CPU/NVENC 对比方法与结果见 [Mux 性能测量](verification/2026-10-27-mux-performance.md)，脚本为 `scripts/measure_mux_performance.ps1`。
 
 ## 打包
 

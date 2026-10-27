@@ -1,6 +1,7 @@
 #include "batchwidget.h"
 #include "batchprogressdelegate.h"
 #include "backendprocess.h"
+#include "elapsedformat.h"
 
 #include <QDir>
 #include <QClipboard>
@@ -87,6 +88,11 @@ BatchWidget::BatchWidget(QWidget* parent, std::function<TranscodeOptions()> opti
     stateLabel_ = new QLabel(QStringLiteral("尚未添加批量任务。"), tablePane);
     stateLabel_->setObjectName(QStringLiteral("batchStateLabel"));
     tableLayout->addWidget(stateLabel_);
+    taskDetails_ = new QLabel(QStringLiteral("选择表格中的任务查看编码设置与结果。"), tablePane);
+    taskDetails_->setObjectName(QStringLiteral("batchTaskDetails"));
+    taskDetails_->setTextFormat(Qt::PlainText);
+    taskDetails_->setWordWrap(true);
+    tableLayout->addWidget(taskDetails_);
     auto* logPane = new QWidget(splitter);
     auto* logLayout = new QVBoxLayout(logPane);
     logLayout->setContentsMargins(0, 0, 0, 0);
@@ -142,6 +148,9 @@ BatchWidget::BatchWidget(QWidget* parent, std::function<TranscodeOptions()> opti
     connect(table_->selectionModel(), &QItemSelectionModel::currentRowChanged,
             this, [selectRowLog](const QModelIndex& current) { selectRowLog(current); });
     connect(table_, &QTableView::clicked, this, selectRowLog);
+    connect(model_, &QAbstractItemModel::dataChanged, this, [this]() {
+        if (selectedLogTaskId_ != 0) showTaskDetails(selectedLogTaskId_);
+    });
 
     connect(chooseDirectoryButton_, &QPushButton::clicked, this, [this]() {
         const QString chosen = QFileDialog::getExistingDirectory(
@@ -162,12 +171,14 @@ BatchWidget::BatchWidget(QWidget* parent, std::function<TranscodeOptions()> opti
         if (active_) return;
         model_->clear();
         runningTimers_.clear();
+        taskPerformance_.clear();
         pendingLogLines_.clear();
         logEntries_.clear();
         selectedLogTaskId_ = 0;
         logSelector_->clear();
         logSelector_->addItem(QStringLiteral("全部日志"), QVariant::fromValue<qulonglong>(0));
         log_->clear();
+        showTaskDetails(0);
         stateLabel_->setText(QStringLiteral("任务已清空。"));
         refreshControls();
     });
@@ -289,6 +300,12 @@ void BatchWidget::startTask(int row)
         const int taskRow = model_->rowForId(id);
         if (taskRow >= 0) model_->setTranscodeProgress(taskRow, percent);
     });
+    connect(backend, &BackendProcess::muxPerformanceReady, this,
+            [this, id = task.id, backend](const MuxPerformance& performance) {
+        if (running_.value(id) != backend) return;
+        taskPerformance_.insert(id, performance);
+        if (selectedLogTaskId_ == id) showTaskDetails(id);
+    });
     connect(backend, &BackendProcess::finished, this,
             [this, id = task.id, backend](bool success, const QString& message) {
         if (running_.value(id) != backend) return;
@@ -343,6 +360,7 @@ void BatchWidget::appendLogLine(quint64 id, const QString& line)
 void BatchWidget::showLogForTask(quint64 id)
 {
     selectedLogTaskId_ = id;
+    showTaskDetails(id);
     QStringList lines;
     for (const LogEntry& entry : logEntries_) {
         if (id == 0 || entry.taskId == id) lines.append(entry.line);
@@ -351,6 +369,49 @@ void BatchWidget::showLogForTask(quint64 id)
     QTextCursor cursor = log_->textCursor();
     cursor.movePosition(QTextCursor::End);
     log_->setTextCursor(cursor);
+}
+
+void BatchWidget::showTaskDetails(quint64 id)
+{
+    const int row = id == 0 ? -1 : model_->rowForId(id);
+    if (row < 0) {
+        taskDetails_->setText(QStringLiteral("选择表格中的任务查看编码设置与结果。"));
+        return;
+    }
+    const BatchTask task = model_->task(row);
+    const QString device = task.options.videoBackend == QStringLiteral("nvenc")
+        ? QStringLiteral("GPU（NVIDIA NVENC）") : QStringLiteral("CPU（软件编码）");
+    const QString codec = task.options.videoCodec == QStringLiteral("h264")
+        ? QStringLiteral("H.264") : QStringLiteral("MPEG-4");
+    QString details = QStringLiteral("任务 #%1 · %2 · %3 / %4 · 旋转 %5° · 倍速 %6x")
+        .arg(task.id).arg(device, codec, task.options.audioCodec)
+        .arg(task.options.rotationDegrees)
+        .arg(QString::number(task.options.speedRatio, 'f', 2));
+    const QString quality = task.options.quality == QStringLiteral("high") ? QStringLiteral("高画质")
+        : task.options.quality == QStringLiteral("balanced") ? QStringLiteral("均衡")
+        : task.options.quality == QStringLiteral("small") ? QStringLiteral("小体积")
+        : task.options.quality == QStringLiteral("bitrate") ? QStringLiteral("指定视频码率")
+        : QStringLiteral("原有默认");
+    details += QStringLiteral("\n画质：%1%2 · 分辨率：%3 · 帧率：%4")
+        .arg(quality,
+             task.options.quality == QStringLiteral("bitrate")
+                ? QStringLiteral(" %1 kbps").arg(task.options.videoBitrateKbps) : QString(),
+             task.options.maxShortEdge ? QStringLiteral("短边不超过 %1").arg(task.options.maxShortEdge) : QStringLiteral("原始"),
+             task.options.outputFps ? QStringLiteral("%1 fps").arg(task.options.outputFps) : QStringLiteral("原始"));
+    details += QStringLiteral("\n状态：%1").arg(model_->data(model_->index(row, 2)).toString());
+    if (task.elapsedMilliseconds >= 0)
+        details += QStringLiteral(" · 耗时 %1").arg(formatElapsed(task.elapsedMilliseconds));
+    if (task.status == BatchTask::Status::Succeeded) {
+        const qint64 bytes = QFileInfo(task.options.outputPath).size();
+        details += QStringLiteral(" · 输出 %1 MiB")
+            .arg(QString::number(bytes / 1048576.0, 'f', 2));
+    } else if (!task.detail.isEmpty()) {
+        details += QStringLiteral(" · %1").arg(task.detail);
+    }
+    if (taskPerformance_.contains(id))
+        details += QLatin1Char('\n') + formatMuxPerformance(taskPerformance_.value(id));
+    taskDetails_->setText(details);
+    taskDetails_->setToolTip(task.options.inputPath + QLatin1Char('\n') + task.options.outputPath);
 }
 
 void BatchWidget::clearVisibleLog()

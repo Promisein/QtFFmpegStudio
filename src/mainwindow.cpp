@@ -22,9 +22,12 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <QProcess>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QShowEvent>
+#include <QSpinBox>
 #include <QSettings>
 #include <QStatusBar>
 #include <QTabBar>
@@ -34,6 +37,18 @@
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
+
+MainWindow::~MainWindow()
+{
+    if (!nvencProbeProcess_) return;
+    nvencProbeProcess_->disconnect(this);
+    if (nvencProbeProcess_->state() != QProcess::NotRunning) {
+        nvencProbeProcess_->kill();
+        nvencProbeProcess_->waitForFinished(3000);
+    }
+    delete nvencProbeProcess_;
+    nvencProbeProcess_ = nullptr;
+}
 
 MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
     : QMainWindow(parent)
@@ -151,6 +166,55 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
     audioCodecCombo_->addItem(QStringLiteral("AAC"), QStringLiteral("aac"));
     optionsForm->addWidget(new QLabel(QStringLiteral("音频编码"), optionsGroup_), 1, 2);
     optionsForm->addWidget(audioCodecCombo_, 1, 3);
+
+    videoBackendCombo_ = new QComboBox(optionsGroup_);
+    videoBackendCombo_->setObjectName(QStringLiteral("videoBackendCombo"));
+    videoBackendCombo_->addItem(QStringLiteral("CPU（软件编码）"), QStringLiteral("software"));
+    videoBackendCombo_->addItem(QStringLiteral("GPU（NVIDIA NVENC）"), QStringLiteral("nvenc"));
+    videoBackendCombo_->setToolTip(QStringLiteral("GPU 仅加速 H.264 视频编码；解码、旋转、倍速和音频处理仍在 CPU 上执行。"));
+    optionsForm->addWidget(new QLabel(QStringLiteral("视频编码设备"), optionsGroup_), 2, 0);
+    optionsForm->addWidget(videoBackendCombo_, 2, 1);
+    nvencStatusLabel_ = new QLabel(QStringLiteral("NVENC：检测中…"), optionsGroup_);
+    nvencStatusLabel_->setObjectName(QStringLiteral("nvencStatusLabel"));
+    nvencStatusLabel_->setWordWrap(true);
+    nvencStatusLabel_->setToolTip(QStringLiteral("通过独立后端实际初始化 h264_nvenc 编码器进行检测。"));
+    optionsForm->addWidget(nvencStatusLabel_, 2, 2);
+    nvencRefreshButton_ = new QPushButton(QStringLiteral("重新检测"), optionsGroup_);
+    nvencRefreshButton_->setObjectName(QStringLiteral("nvencRefreshButton"));
+    optionsForm->addWidget(nvencRefreshButton_, 2, 3);
+    qualityCombo_ = new QComboBox(optionsGroup_);
+    qualityCombo_->setObjectName(QStringLiteral("qualityCombo"));
+    qualityCombo_->addItem(QStringLiteral("原有默认"), QStringLiteral("default"));
+    qualityCombo_->addItem(QStringLiteral("高画质"), QStringLiteral("high"));
+    qualityCombo_->addItem(QStringLiteral("均衡"), QStringLiteral("balanced"));
+    qualityCombo_->addItem(QStringLiteral("小体积"), QStringLiteral("small"));
+    qualityCombo_->addItem(QStringLiteral("指定视频码率"), QStringLiteral("bitrate"));
+    optionsForm->addWidget(new QLabel(QStringLiteral("画质"), optionsGroup_), 3, 0);
+    optionsForm->addWidget(qualityCombo_, 3, 1);
+    bitrateSpin_ = new QSpinBox(optionsGroup_);
+    bitrateSpin_->setObjectName(QStringLiteral("bitrateSpin"));
+    bitrateSpin_->setRange(100, 100000);
+    bitrateSpin_->setSingleStep(500);
+    bitrateSpin_->setValue(2000);
+    bitrateSpin_->setSuffix(QStringLiteral(" kbps"));
+    bitrateSpin_->setToolTip(QStringLiteral("视频平均目标码率，实际文件大小还受音频及内容影响。"));
+    bitrateSpin_->setEnabled(false);
+    optionsForm->addWidget(new QLabel(QStringLiteral("目标视频码率"), optionsGroup_), 3, 2);
+    optionsForm->addWidget(bitrateSpin_, 3, 3);
+    resolutionCombo_ = new QComboBox(optionsGroup_);
+    resolutionCombo_->setObjectName(QStringLiteral("resolutionCombo"));
+    resolutionCombo_->addItem(QStringLiteral("保持原始尺寸"), 0);
+    resolutionCombo_->addItem(QStringLiteral("720p（短边不超过 720）"), 720);
+    resolutionCombo_->addItem(QStringLiteral("1080p（短边不超过 1080）"), 1080);
+    resolutionCombo_->setToolTip(QStringLiteral("旋转后按比例缩小，不放大小于目标的画面。"));
+    optionsForm->addWidget(new QLabel(QStringLiteral("输出分辨率"), optionsGroup_), 4, 0);
+    optionsForm->addWidget(resolutionCombo_, 4, 1);
+    frameRateCombo_ = new QComboBox(optionsGroup_);
+    frameRateCombo_->setObjectName(QStringLiteral("frameRateCombo"));
+    frameRateCombo_->addItem(QStringLiteral("保持原始帧率"), 0);
+    for (int fps : {24, 25, 30, 60}) frameRateCombo_->addItem(QStringLiteral("%1 fps").arg(fps), fps);
+    optionsForm->addWidget(new QLabel(QStringLiteral("输出帧率"), optionsGroup_), 4, 2);
+    optionsForm->addWidget(frameRateCombo_, 4, 3);
     optionsForm->setColumnStretch(1, 1);
     optionsForm->setColumnStretch(3, 1);
     layout->addWidget(optionsGroup_);
@@ -174,7 +238,7 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
     optionsPreview_ = new QPlainTextEdit(singleFileTools_);
     optionsPreview_->setObjectName(QStringLiteral("optionsPreview"));
     optionsPreview_->setReadOnly(true);
-    optionsPreview_->setMaximumHeight(82);
+    optionsPreview_->setMaximumHeight(110);
     optionsPreview_->setPlaceholderText(QStringLiteral("点击“预览参数”查看当前配置"));
     singleToolsLayout->addWidget(previewButton);
     singleToolsLayout->addWidget(optionsPreview_);
@@ -231,6 +295,15 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
     realElapsedLabel_ = new QLabel(QStringLiteral("耗时：—"), realGroup);
     realElapsedLabel_->setObjectName(QStringLiteral("realElapsedLabel"));
     realLayout->addWidget(realElapsedLabel_);
+    auto* resultGroup = new QGroupBox(QStringLiteral("本次转码结果"), realGroup);
+    resultGroup->setObjectName(QStringLiteral("realResultGroup"));
+    auto* resultLayout = new QVBoxLayout(resultGroup);
+    realResultSummary_ = new QLabel(QStringLiteral("完成后显示编码设备、处理速度和耗时分布。"), resultGroup);
+    realResultSummary_->setObjectName(QStringLiteral("realResultSummary"));
+    realResultSummary_->setTextFormat(Qt::PlainText);
+    realResultSummary_->setWordWrap(true);
+    resultLayout->addWidget(realResultSummary_);
+    realLayout->addWidget(resultGroup);
     auto* realLogTools = new QHBoxLayout;
     realLogTools->addWidget(new QLabel(QStringLiteral("运行日志"), realGroup));
     realLogTools->addStretch();
@@ -302,10 +375,10 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
         QGroupBox { background: #192438; border: 1px solid #2d3c55; border-radius: 10px;
                     margin-top: 13px; padding: 10px 12px 8px; font-weight: 600; }
         QGroupBox::title { subcontrol-origin: margin; left: 14px; padding: 0 5px; }
-        QLineEdit, QComboBox, QDoubleSpinBox, QPlainTextEdit, QTableView {
+        QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox, QPlainTextEdit, QTableView {
             background: #111b2c; color: #e8eef7; border: 1px solid #35455f;
             border-radius: 6px; padding: 5px; selection-background-color: #3167bb; }
-        QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus, QPlainTextEdit:focus {
+        QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus, QSpinBox:focus, QPlainTextEdit:focus {
             border-color: #6da8ff; }
         QPushButton { background: #273a55; color: #e8eef7; border: 1px solid #395172;
                       border-radius: 6px; padding: 7px 13px; }
@@ -328,12 +401,41 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
     statusBar()->showMessage(QStringLiteral("准备就绪"));
 
     backend_ = new BackendProcess(this);
+    nvencProbeProcess_ = new QProcess(this);
+    connect(nvencProbeProcess_, &QProcess::finished, this,
+            [this](int exitCode, QProcess::ExitStatus exitStatus) {
+        const QByteArray output = nvencProbeProcess_->readAllStandardOutput();
+        QString status;
+        if (exitStatus == QProcess::NormalExit && exitCode == 0
+            && output.contains("QFS_NVENC_CHECK status=available")) {
+            status = QStringLiteral("NVENC：可用");
+        } else if (output.contains("status=missing_encoder")) {
+            status = QStringLiteral("NVENC：不可用（FFmpeg 缺少 h264_nvenc）");
+        } else if (output.contains("status=unsupported_options")) {
+            status = QStringLiteral("NVENC：不可用（FFmpeg 不支持当前编码参数）");
+        } else if (output.contains("status=init_failed")) {
+            status = QStringLiteral("NVENC：不可用（显卡、驱动或编码会话无法初始化）");
+        } else {
+            status = QStringLiteral("NVENC：不可用（检测失败，退出码 %1）").arg(exitCode);
+        }
+        nvencStatusLabel_->setText(status);
+        nvencRefreshButton_->setEnabled(true);
+    });
+    connect(nvencProbeProcess_, &QProcess::errorOccurred, this,
+            [this](QProcess::ProcessError error) {
+        if (error != QProcess::FailedToStart) return;
+        nvencStatusLabel_->setText(QStringLiteral("NVENC：不可用（无法启动后端程序）"));
+        nvencRefreshButton_->setEnabled(true);
+    });
+    connect(nvencRefreshButton_, &QPushButton::clicked,
+            this, &MainWindow::checkNvencAvailability);
     mediaProbe_ = new MediaProbe(this);
     connect(mediaProbe_, &MediaProbe::ready, this,
             [this](const QString& path, const MediaInfo& info) {
         if (path != inputPathEdit_->text()) return;
         analyzedInputPath_ = path;
         analyzedInputSupported_ = info.supported;
+        analyzedDurationSeconds_ = info.durationSeconds;
         const QString unknown = QStringLiteral("未知");
         const QString duration = info.durationSeconds > 0
             ? QStringLiteral("%1 秒").arg(QString::number(info.durationSeconds, 'f', 1)) : unknown;
@@ -363,6 +465,7 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
         if (path != inputPathEdit_->text()) return;
         analyzedInputPath_.clear();
         analyzedInputSupported_ = false;
+        analyzedDurationSeconds_ = -1.0;
         mediaState_->setText(QStringLiteral("分析失败"));
         mediaDetails_->setText(error);
         if (taskState_ == TaskState::Idle)
@@ -372,6 +475,7 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
     connect(inputPathEdit_, &QLineEdit::textChanged, this, [this](const QString& path) {
         analyzedInputPath_.clear();
         analyzedInputSupported_ = false;
+        analyzedDurationSeconds_ = -1.0;
         inputPathEdit_->setToolTip(path);
         mediaRetryButton_->setEnabled(!path.isEmpty());
         mediaState_->setText(path.isEmpty() ? QStringLiteral("等待选择视频") : QStringLiteral("分析中…"));
@@ -385,6 +489,7 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
     connect(mediaRetryButton_, &QPushButton::clicked, this, [this]() {
         analyzedInputPath_.clear();
         analyzedInputSupported_ = false;
+        analyzedDurationSeconds_ = -1.0;
         mediaState_->setText(QStringLiteral("分析中…"));
         mediaDetails_->setText(QStringLiteral("正在重新读取视频信息"));
         if (taskState_ == TaskState::Idle)
@@ -434,10 +539,17 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
         realTranscodeProgress_->setFormat(QStringLiteral("转码进度（估算）：%p%"));
         realStateLabel_->setText(QStringLiteral("正在转码；整体估算进度 %1%。").arg(percent));
     });
+    connect(backend_, &BackendProcess::muxPerformanceReady, this,
+            [this](const MuxPerformance& performance) {
+        realMuxPerformance_ = performance;
+        hasRealMuxPerformance_ = true;
+    });
     connect(backend_, &BackendProcess::finished, this,
             [this](bool success, const QString& message) {
-        realElapsedLabel_->setText(realElapsedTimer_.isValid()
-            ? QStringLiteral("耗时：%1").arg(formatElapsed(realElapsedTimer_.elapsed()))
+        const qint64 elapsedMs = realElapsedTimer_.isValid()
+            ? realElapsedTimer_.elapsed() : -1;
+        realElapsedLabel_->setText(elapsedMs >= 0
+            ? QStringLiteral("耗时：%1").arg(formatElapsed(elapsedMs))
             : QStringLiteral("耗时：—"));
         realElapsedTimer_.invalidate();
         if (success) realTranscodeProgress_->setValue(100);
@@ -445,6 +557,24 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
             ? QStringLiteral("转码完成：100%")
             : QStringLiteral("转码未完成｜已处理约 %p%"));
         lastSuccessfulOutput_ = success ? outputPathEdit_->text() : QString{};
+        if (success) {
+            const QString device = activeRealOptions_.videoBackend == QStringLiteral("nvenc")
+                ? QStringLiteral("GPU（NVIDIA NVENC）") : QStringLiteral("CPU（软件编码）");
+            const qint64 bytes = QFileInfo(activeRealOptions_.outputPath).size();
+            QString summary = QStringLiteral("编码设备：%1  ·  总耗时：%2  ·  输出：%3 MiB")
+                .arg(device, elapsedMs >= 0 ? formatElapsed(elapsedMs) : QStringLiteral("未知"),
+                     QString::number(bytes / 1048576.0, 'f', 2));
+            if (activeInputDurationSeconds_ > 0 && elapsedMs > 0) {
+                summary += QStringLiteral("\n处理倍率：%1x（输入时长 ÷ 实际耗时）")
+                    .arg(QString::number(activeInputDurationSeconds_ * 1000.0 / elapsedMs, 'f', 2));
+            }
+            summary += hasRealMuxPerformance_
+                ? QLatin1Char('\n') + formatMuxPerformance(realMuxPerformance_)
+                : QStringLiteral("\nMux 计时未提供；详见日志。");
+            realResultSummary_->setText(summary);
+        } else {
+            realResultSummary_->setText(QStringLiteral("本次转码未完成；详见运行日志。"));
+        }
         setTaskState(TaskState::Idle);
         realStateLabel_->setText(message);
         statusBar()->showMessage(success ? QStringLiteral("真实转码完成")
@@ -474,9 +604,54 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
     connect(rotationCombo_, &QComboBox::currentIndexChanged, this, clearPreview);
     connect(speedSpin_, &QDoubleSpinBox::valueChanged, this, clearPreview);
     connect(videoCodecCombo_, &QComboBox::currentIndexChanged, this, clearPreview);
+    connect(videoBackendCombo_, &QComboBox::currentIndexChanged, this, clearPreview);
     connect(audioCodecCombo_, &QComboBox::currentIndexChanged, this, clearPreview);
+    connect(qualityCombo_, &QComboBox::currentIndexChanged, this, [this, clearPreview]() {
+        bitrateSpin_->setEnabled(qualityCombo_->currentData() == QStringLiteral("bitrate"));
+        clearPreview();
+    });
+    connect(bitrateSpin_, &QSpinBox::valueChanged, this, clearPreview);
+    connect(resolutionCombo_, &QComboBox::currentIndexChanged, this, clearPreview);
+    connect(frameRateCombo_, &QComboBox::currentIndexChanged, this, clearPreview);
+    connect(videoBackendCombo_, &QComboBox::currentIndexChanged, this, [this]() {
+        if (videoBackendCombo_->currentData() == QStringLiteral("nvenc")
+            && videoCodecCombo_->currentData() != QStringLiteral("h264")) {
+            videoCodecCombo_->setCurrentIndex(videoCodecCombo_->findData(QStringLiteral("h264")));
+        }
+    });
+    connect(videoCodecCombo_, &QComboBox::currentIndexChanged, this, [this]() {
+        if (videoCodecCombo_->currentData() == QStringLiteral("mpeg4")
+            && videoBackendCombo_->currentData() == QStringLiteral("nvenc")) {
+            videoBackendCombo_->setCurrentIndex(videoBackendCombo_->findData(QStringLiteral("software")));
+        }
+    });
     loadSettings();
     setTaskState(TaskState::Idle);
+}
+
+void MainWindow::showEvent(QShowEvent* event)
+{
+    QMainWindow::showEvent(event);
+    if (nvencProbeStarted_) return;
+    nvencProbeStarted_ = true;
+    checkNvencAvailability();
+}
+
+void MainWindow::checkNvencAvailability()
+{
+    if (nvencProbeProcess_->state() != QProcess::NotRunning) return;
+    const QString executable = QDir(QCoreApplication::applicationDirPath())
+        .filePath(QStringLiteral("FFmpegProjectBackend.exe"));
+    if (!QFileInfo(executable).isFile()) {
+        nvencStatusLabel_->setText(QStringLiteral("NVENC：不可用（后端程序缺失）"));
+        nvencRefreshButton_->setEnabled(true);
+        return;
+    }
+    nvencStatusLabel_->setText(QStringLiteral("NVENC：检测中…"));
+    nvencRefreshButton_->setEnabled(false);
+    nvencProbeProcess_->setProgram(executable);
+    nvencProbeProcess_->setArguments({QStringLiteral("--check-nvenc")});
+    nvencProbeProcess_->start();
 }
 
 TranscodeOptions MainWindow::readOptions() const
@@ -487,7 +662,12 @@ TranscodeOptions MainWindow::readOptions() const
     options.rotationDegrees = rotationCombo_->currentData().toInt();
     options.speedRatio = speedSpin_->value();
     options.videoCodec = videoCodecCombo_->currentData().toString();
+    options.videoBackend = videoBackendCombo_->currentData().toString();
     options.audioCodec = audioCodecCombo_->currentData().toString();
+    options.quality = qualityCombo_->currentData().toString();
+    options.videoBitrateKbps = bitrateSpin_->value();
+    options.maxShortEdge = resolutionCombo_->currentData().toInt();
+    options.outputFps = frameRateCombo_->currentData().toInt();
     return options;
 }
 
@@ -499,14 +679,22 @@ void MainWindow::showOptionsPreview()
     const QString output = options.outputPath.isEmpty()
         ? QStringLiteral("尚未选择") : options.outputPath;
 
+    const QString quality = qualityCombo_->currentText()
+        + (options.quality == QStringLiteral("bitrate")
+           ? QStringLiteral("（%1 kbps）").arg(options.videoBitrateKbps) : QString());
     optionsPreview_->setPlainText(
-        QStringLiteral("输入：%1\n输出：%2\n旋转：%3°\n倍速：%4x\n视频编码：%5\n音频编码：%6")
+        QStringLiteral("输入：%1\n输出：%2\n旋转：%3°\n倍速：%4x\n视频编码：%5\n视频编码设备：%6\n音频编码：%7\n画质：%8\n分辨率：%9\n帧率：%10")
             .arg(input)
             .arg(output)
             .arg(options.rotationDegrees)
             .arg(QString::number(options.speedRatio, 'f', 2))
             .arg(options.videoCodec)
-            .arg(options.audioCodec));
+            .arg(options.videoBackend == QStringLiteral("nvenc")
+                ? QStringLiteral("GPU（NVIDIA NVENC）") : QStringLiteral("CPU（软件编码）"))
+            .arg(options.audioCodec)
+            .arg(quality)
+            .arg(resolutionCombo_->currentText())
+            .arg(frameRateCombo_->currentText()));
 }
 
 void MainWindow::selectInputFile()
@@ -697,6 +885,10 @@ void MainWindow::startRealTranscode()
     }
 
     realLog_->clear();
+    activeRealOptions_ = options;
+    activeInputDurationSeconds_ = analyzedDurationSeconds_;
+    hasRealMuxPerformance_ = false;
+    realResultSummary_->setText(QStringLiteral("转码中；完成后显示结果与性能摘要。"));
     realTranscodeProgress_->setFormat(QStringLiteral("转码进度：估算中"));
     realTranscodeProgress_->setValue(0);
     lastSuccessfulOutput_.clear();
@@ -751,8 +943,17 @@ void MainWindow::loadSettings()
     if (speed >= speedSpin_->minimum() && speed <= speedSpin_->maximum()) speedSpin_->setValue(speed);
     const int video = videoCodecCombo_->findData(settings_->value(QStringLiteral("options/videoCodec")));
     if (video >= 0) videoCodecCombo_->setCurrentIndex(video);
+    const int backend = videoBackendCombo_->findData(settings_->value(QStringLiteral("options/videoBackend")));
+    if (backend >= 0) videoBackendCombo_->setCurrentIndex(backend);
     const int audio = audioCodecCombo_->findData(settings_->value(QStringLiteral("options/audioCodec")));
     if (audio >= 0) audioCodecCombo_->setCurrentIndex(audio);
+    const int quality = qualityCombo_->findData(settings_->value(QStringLiteral("options/quality"), QStringLiteral("default")));
+    if (quality >= 0) qualityCombo_->setCurrentIndex(quality);
+    bitrateSpin_->setValue(settings_->value(QStringLiteral("options/videoBitrateKbps"), 2000).toInt());
+    const int resolution = resolutionCombo_->findData(settings_->value(QStringLiteral("options/maxShortEdge"), 0));
+    if (resolution >= 0) resolutionCombo_->setCurrentIndex(resolution);
+    const int frameRate = frameRateCombo_->findData(settings_->value(QStringLiteral("options/outputFps"), 0));
+    if (frameRate >= 0) frameRateCombo_->setCurrentIndex(frameRate);
     batchWidget_->setMaxConcurrent(settings_->value(QStringLiteral("batch/maxConcurrent"), 1).toInt());
 }
 
@@ -778,7 +979,12 @@ void MainWindow::saveSettings()
     settings_->setValue(QStringLiteral("options/rotation"), options.rotationDegrees);
     settings_->setValue(QStringLiteral("options/speed"), options.speedRatio);
     settings_->setValue(QStringLiteral("options/videoCodec"), options.videoCodec);
+    settings_->setValue(QStringLiteral("options/videoBackend"), options.videoBackend);
     settings_->setValue(QStringLiteral("options/audioCodec"), options.audioCodec);
+    settings_->setValue(QStringLiteral("options/quality"), options.quality);
+    settings_->setValue(QStringLiteral("options/videoBitrateKbps"), options.videoBitrateKbps);
+    settings_->setValue(QStringLiteral("options/maxShortEdge"), options.maxShortEdge);
+    settings_->setValue(QStringLiteral("options/outputFps"), options.outputFps);
     settings_->setValue(QStringLiteral("batch/maxConcurrent"), batchWidget_->maxConcurrent());
     settings_->sync();
 }

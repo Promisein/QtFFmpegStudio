@@ -78,8 +78,16 @@ void BackendProcess::start(const TranscodeOptions& options, bool overwrite)
         QStringLiteral("-o"), options.outputPath,
         QStringLiteral("-speed"), QString::number(options.speedRatio, 'f', 2),
         QStringLiteral("-vcodec"), options.videoCodec,
+        QStringLiteral("-vbackend"), options.videoBackend,
         QStringLiteral("-acodec"), options.audioCodec
     };
+    arguments << QStringLiteral("-quality") << options.quality;
+    if (options.quality == QStringLiteral("bitrate"))
+        arguments << QStringLiteral("-bitrate") << QString::number(options.videoBitrateKbps);
+    if (options.maxShortEdge > 0)
+        arguments << QStringLiteral("-height") << QString::number(options.maxShortEdge);
+    if (options.outputFps > 0)
+        arguments << QStringLiteral("-fps") << QString::number(options.outputFps);
     if (options.rotationDegrees != 0) {
         arguments << QStringLiteral("-rotate") << QString::number(options.rotationDegrees);
     }
@@ -122,7 +130,13 @@ void BackendProcess::readOutput()
     if (decoded.isEmpty()) return;
     QString visibleLog;
     const auto changes = progressParser_.append(decoded, &visibleLog);
-    if (!visibleLog.isEmpty()) emit logReceived(visibleLog);
+    if (!visibleLog.isEmpty()) {
+        for (const QString& line : visibleLog.split(QLatin1Char('\n'))) {
+            if (const auto performance = MuxPerformance::parseLine(line))
+                emit muxPerformanceReady(*performance);
+        }
+        emit logReceived(visibleLog);
+    }
     if (active_ && !cancelled_) {
         for (const int percent : changes) {
             emit transcodeProgressChanged(percent);

@@ -11,6 +11,11 @@ struct TranscodeOptions
     int rotationDegrees = 0;
     double speedRatio = 1.0;
     QString videoCodec = QStringLiteral("mpeg4");
+    QString videoBackend = QStringLiteral("software");
+    QString quality = QStringLiteral("default");
+    int videoBitrateKbps = 2000;
+    int maxShortEdge = 0;
+    int outputFps = 0;
     QString audioCodec = QStringLiteral("ac3");
 };
 

@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cmath>
 #include <algorithm>
+#include <chrono>
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -31,16 +32,59 @@ struct PacketComparator {
     }
 };
 
+struct MuxTiming {
+    using Clock = std::chrono::steady_clock;
+    using Duration = Clock::duration;
+
+    Clock::time_point started = Clock::now();
+    Duration params_wait{};
+    Duration open{};
+    Duration header{};
+    Duration video_pop{};
+    Duration audio_pop{};
+    Duration write{};
+    Duration trailer{};
+    Duration sleep{};
+    Duration cleanup{};
+    int sleep_calls = 0;
+
+    void report(int video_packets, int audio_packets) const {
+        const auto ms = [](Duration value) {
+            return std::chrono::duration<double, std::milli>(value).count();
+        };
+        Logger::info("Mux", "性能统计: total_ms=" + std::to_string(ms(Clock::now() - started))
+                     + " params_wait_ms=" + std::to_string(ms(params_wait))
+                     + " open_ms=" + std::to_string(ms(open))
+                     + " header_ms=" + std::to_string(ms(header))
+                     + " video_pop_ms=" + std::to_string(ms(video_pop))
+                     + " audio_pop_ms=" + std::to_string(ms(audio_pop))
+                     + " write_ms=" + std::to_string(ms(write))
+                     + " trailer_ms=" + std::to_string(ms(trailer))
+                     + " sleep_ms=" + std::to_string(ms(sleep))
+                     + " cleanup_ms=" + std::to_string(ms(cleanup))
+                     + " sleep_calls=" + std::to_string(sleep_calls)
+                     + " video_packets=" + std::to_string(video_packets)
+                     + " audio_packets=" + std::to_string(audio_packets));
+    }
+};
+
 void mux_thread(const std::string& output_file,
-                AVCodecParameters* video_enc_par,
-                AVCodecParameters* audio_enc_par,
                 AVRational output_time_base,
                 double expected_output_duration_seconds,
                 DeepCopyPacketQueue& video_q,
                 DeepCopyPacketQueue& audio_q,
                 const ProcessingConfig& config,
                 Pipeline* pipeline) {
+    MuxTiming timing;
     Logger::info("Mux", std::string("开始创建输出文件: ") + output_file);
+
+    AVCodecParameters* video_enc_par = nullptr;
+    AVCodecParameters* audio_enc_par = nullptr;
+    if (!pipeline) return;
+    const auto params_wait_started = MuxTiming::Clock::now();
+    const bool parameters_ready = pipeline->wait_for_encoder_parameters(video_enc_par, audio_enc_par);
+    timing.params_wait += MuxTiming::Clock::now() - params_wait_started;
+    if (!parameters_ready) return;
 
     AVFormatContext* out_fmt_ctx_raw = nullptr;
     char err_buf[1024];
@@ -106,7 +150,9 @@ void mux_thread(const std::string& output_file,
     av_dump_format(out_fmt_ctx_raw, 0, output_file.c_str(), 1);
 
     if (!(out_fmt_ctx_raw->oformat->flags & AVFMT_NOFILE)) {
+        const auto open_started = MuxTiming::Clock::now();
         ret = avio_open(&out_fmt_ctx_raw->pb, output_file.c_str(), AVIO_FLAG_WRITE);
+        timing.open += MuxTiming::Clock::now() - open_started;
         if (ret < 0) {
             av_strerror(ret, err_buf, sizeof(err_buf));
             if (pipeline) pipeline->report_error(std::string("[Mux] 打开输出文件失败: ") + err_buf);
@@ -115,7 +161,9 @@ void mux_thread(const std::string& output_file,
         }
     }
 
+    const auto header_started = MuxTiming::Clock::now();
     ret = avformat_write_header(out_fmt_ctx_raw, nullptr);
+    timing.header += MuxTiming::Clock::now() - header_started;
     if (ret < 0) {
         av_strerror(ret, err_buf, sizeof(err_buf));
         if (pipeline) pipeline->report_error(std::string("[Mux] 写入文件头失败: ") + err_buf);
@@ -138,7 +186,9 @@ void mux_thread(const std::string& output_file,
         if (!video_done) {
             PacketPtr video_pkt(av_packet_alloc());
             if (video_pkt) {
+                const auto pop_started = MuxTiming::Clock::now();
                 bool success = video_q.pop(*video_pkt);
+                timing.video_pop += MuxTiming::Clock::now() - pop_started;
                 if (success) {
                     video_pkt->stream_index = video_stream->index;
 
@@ -165,7 +215,9 @@ void mux_thread(const std::string& output_file,
         if (audio_stream && !audio_done) {
             PacketPtr audio_pkt(av_packet_alloc());
             if (audio_pkt) {
+                const auto pop_started = MuxTiming::Clock::now();
                 bool success = audio_q.pop(*audio_pkt);
+                timing.audio_pop += MuxTiming::Clock::now() - pop_started;
                 if (success) {
                     audio_pkt->stream_index = audio_stream->index;
 
@@ -204,7 +256,9 @@ void mux_thread(const std::string& output_file,
             const int64_t packet_duration = pkt->duration;
             const int packet_size = pkt->size;
             const AVRational packet_time_base = out_fmt_ctx_raw->streams[stream_index]->time_base;
+            const auto write_started = MuxTiming::Clock::now();
             ret = av_interleaved_write_frame(out_fmt_ctx_raw, pkt);
+            timing.write += MuxTiming::Clock::now() - write_started;
             if (ret < 0) {
                 av_strerror(ret, err_buf, sizeof(err_buf));
                 Logger::error("Mux", std::string("写入数据包失败: ") + err_buf
@@ -232,7 +286,10 @@ void mux_thread(const std::string& output_file,
         }
 
         if (packet_queue.empty() && (!video_done || !audio_done)) {
+            const auto sleep_started = MuxTiming::Clock::now();
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            timing.sleep += MuxTiming::Clock::now() - sleep_started;
+            ++timing.sleep_calls;
         }
     }
 
@@ -240,7 +297,9 @@ void mux_thread(const std::string& output_file,
     bool has_error = pipeline && pipeline->has_error();
     if (!has_error) {
         Logger::info("Mux", "写入文件尾...");
+        const auto trailer_started = MuxTiming::Clock::now();
         ret = av_write_trailer(out_fmt_ctx_raw);
+        timing.trailer += MuxTiming::Clock::now() - trailer_started;
         if (ret < 0) {
             av_strerror(ret, err_buf, sizeof(err_buf));
             Logger::warn("Mux", std::string("写入文件尾失败: ") + err_buf);
@@ -254,7 +313,10 @@ void mux_thread(const std::string& output_file,
                  + "，音频包: " + std::to_string(audio_packet_count)
                  + "，音频累计: " + std::to_string(audio_accumulated_samples));
 
+    const auto cleanup_started = MuxTiming::Clock::now();
     cleanup_output(out_fmt_ctx_raw);
+    timing.cleanup += MuxTiming::Clock::now() - cleanup_started;
+    timing.report(video_packet_count, audio_packet_count);
 
     // 错误时删除不完整的输出文件
     if (has_error) {

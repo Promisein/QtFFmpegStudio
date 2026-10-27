@@ -12,6 +12,11 @@ enum VideoCodec {
     VIDEO_CODEC_H264,
 };
 
+enum VideoEncoderBackend {
+    VIDEO_BACKEND_SOFTWARE = 0,
+    VIDEO_BACKEND_NVENC,
+};
+
 // 音频编码器
 enum AudioCodec {
     AUDIO_CODEC_AC3 = 0,
@@ -23,6 +28,11 @@ struct ProcessingConfig {
     VideoRotateAngle rotate = ROTATE_NONE;
     double speed_ratio = 1.0;   // 1.0 = normal, 2.0 = 2x fast, 0.5 = half speed
     VideoCodec video_codec = VIDEO_CODEC_MPEG4;  // 视频编码器
+    VideoEncoderBackend video_backend = VIDEO_BACKEND_SOFTWARE;
+    int quality = 0; // 0 default, 1 high, 2 balanced, 3 small, 4 bitrate
+    int video_bitrate_kbps = 0;
+    int max_short_edge = 0;
+    int output_fps = 0;
     AudioCodec audio_codec = AUDIO_CODEC_AC3;    // 音频编码器
 };
 

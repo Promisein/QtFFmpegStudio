@@ -7,7 +7,9 @@
 #include <string>
 #include <atomic>
 #include <mutex>
+#include <condition_variable>
 #include <cstdint>
+#include "ffmpeg_raii.h"
 #include "packet_queue.h"
 #include "deep_copy_packey_queue.h"
 #include "ring_buffer.h"
@@ -26,6 +28,8 @@ public:
     void report_error(const std::string& msg);
     bool has_error() const;
     std::string get_error() const;
+    bool publish_encoder_parameters(bool video, const AVCodecContext* context);
+    bool wait_for_encoder_parameters(AVCodecParameters*& video, AVCodecParameters*& audio);
 
     // --- FPS / frame counters (atomic, written by worker threads) ---
     std::atomic<int64_t> demux_video_packets{0};
@@ -44,6 +48,10 @@ private:
     std::atomic<bool> error_flag_{false};
     mutable std::mutex error_mtx_;
     std::string error_msg_;
+    std::mutex encoder_params_mtx_;
+    std::condition_variable encoder_params_cv_;
+    CodecParametersPtr video_encoder_params_;
+    CodecParametersPtr audio_encoder_params_;
 };
 
 #endif // FFMPEGPROJECT_PIPELINE_H

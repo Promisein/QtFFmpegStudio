@@ -73,47 +73,13 @@ TranscodeResult transcode_single(const std::string& input_path,
     AVCodecParameters* video_dec_par = fmt_ctx->streams[video_stream_idx]->codecpar;
     AVCodecParameters* audio_dec_par = fmt_ctx->streams[audio_stream_idx]->codecpar;
 
-    // 确定输出分辨率
-    int out_width = video_dec_par->width;
-    int out_height = video_dec_par->height;
-    if (config.rotate == ROTATE_90_CW || config.rotate == ROTATE_270_CW) {
-        std::swap(out_width, out_height);
-    }
-
-    // 视频编码参数（根据 codec 动态设置）
-    CodecParametersPtr video_enc_params(avcodec_parameters_alloc());
-    video_enc_params->codec_type = AVMEDIA_TYPE_VIDEO;
-    video_enc_params->width = out_width;
-    video_enc_params->height = out_height;
-    video_enc_params->format = AV_PIX_FMT_YUV420P;
-    video_enc_params->bit_rate = 1000000;
-
-    if (config.video_codec == VIDEO_CODEC_H264) {
-        video_enc_params->codec_id = AV_CODEC_ID_H264;
-        video_enc_params->codec_tag = 0;
-    } else {
-        video_enc_params->codec_id = AV_CODEC_ID_MPEG4;
-        video_enc_params->codec_tag = 0x7634706d;  // 'mp4v'
-    }
-
-    // 音频编码参数（根据 codec 动态设置）
-    CodecParametersPtr audio_enc_params(avcodec_parameters_alloc());
-    audio_enc_params->codec_type = AVMEDIA_TYPE_AUDIO;
-    audio_enc_params->sample_rate = audio_dec_par->sample_rate;
-    audio_enc_params->channels = audio_dec_par->channels;
-    audio_enc_params->channel_layout = av_get_default_channel_layout(audio_dec_par->channels);
-    audio_enc_params->format = AV_SAMPLE_FMT_FLTP;
-    audio_enc_params->bit_rate = 128000;
-    audio_enc_params->codec_id = (config.audio_codec == AUDIO_CODEC_AAC)
-        ? AV_CODEC_ID_AAC : AV_CODEC_ID_AC3;
-    audio_enc_params->frame_size = (config.audio_codec == AUDIO_CODEC_AAC) ? 1024 : 1536;
-
     // 输出时间基
     AVRational input_frame_rate = fmt_ctx->streams[video_stream_idx]->r_frame_rate;
     if (input_frame_rate.num == 0 || input_frame_rate.den == 0) {
         input_frame_rate = (AVRational){25, 1};
     }
-    AVRational output_time_base = av_inv_q(input_frame_rate);
+    AVRational output_time_base = config.output_fps > 0
+        ? AVRational{1, config.output_fps} : av_inv_q(input_frame_rate);
     const double expected_output_duration_seconds = fmt_ctx->duration > 0
         ? (fmt_ctx->duration / static_cast<double>(AV_TIME_BASE)) / config.speed_ratio
         : 0.0;
@@ -140,7 +106,7 @@ TranscodeResult transcode_single(const std::string& input_path,
                              std::ref(pipeline.audio_frame_ringbuf),
                              &pipeline);
 
-    std::thread video_enc_th(video_encode_thread, video_dec_par, output_time_base,
+    std::thread video_enc_th(video_encode_thread, video_dec_par, output_time_base, input_frame_rate,
                              std::ref(pipeline.video_frame_ringbuf),
                              std::ref(pipeline.en_video_pkt_queue),
                              config, &pipeline);
@@ -150,7 +116,7 @@ TranscodeResult transcode_single(const std::string& input_path,
                              config, &pipeline);
 
     std::thread mux_th(mux_thread, output_file,
-                       video_enc_params.get(), audio_enc_params.get(), output_time_base,
+                       output_time_base,
                        expected_output_duration_seconds,
                        std::ref(pipeline.en_video_pkt_queue),
                        std::ref(pipeline.en_audio_pkt_queue),

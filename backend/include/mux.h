@@ -8,12 +8,9 @@
 #include <string>
 #include "common.h"
 #include "config.h"
-struct AVCodecParameters;
 
-// 复用线程（入参：输出文件路径、视频/音频编码参数、输出时间基、输入队列、处理配置）
+// 封装线程等待编码线程发布真实参数，再写入 MP4 文件头。
 void mux_thread(const std::string& output_file,
-                AVCodecParameters* video_enc_par,
-                AVCodecParameters* audio_enc_par,
                 AVRational output_time_base,
                 double expected_output_duration_seconds,
                 DeepCopyPacketQueue& video_q,

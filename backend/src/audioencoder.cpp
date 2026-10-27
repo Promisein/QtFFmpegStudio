@@ -80,6 +80,7 @@ void audio_encode_thread(AVCodecParameters* src_codec_par, AVRational output_tim
     enc_ctx->channels = src_codec_par->channels;
     enc_ctx->bit_rate = 128000;
     enc_ctx->time_base = (AVRational){1, enc_ctx->sample_rate};
+    enc_ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
     // frame_size 在 avcodec_open2 后动态读取
 
     char err_buf[1024];
@@ -89,6 +90,8 @@ void audio_encode_thread(AVCodecParameters* src_codec_par, AVRational output_tim
         if (pipeline) pipeline->report_error(std::string("[AudioEncoder] 打开AC3编码器失败：") + err_buf);
         return;
     }
+
+    if (pipeline && !pipeline->publish_encoder_parameters(false, enc_ctx.get())) return;
 
     // 读取编码器实际 frame_size
     int required_nb_samples = enc_ctx->frame_size;

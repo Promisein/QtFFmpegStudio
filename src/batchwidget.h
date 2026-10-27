@@ -7,6 +7,7 @@
 #include <functional>
 
 #include "batchtaskmodel.h"
+#include "muxperformance.h"
 
 class BackendProcess;
 class QComboBox;
@@ -43,6 +44,7 @@ private:
     void appendTaskLog(quint64 id, const QString& text);
     void appendLogLine(quint64 id, const QString& line);
     void showLogForTask(quint64 id);
+    void showTaskDetails(quint64 id);
     void clearVisibleLog();
     void finishQueue();
     void refreshControls();
@@ -51,6 +53,7 @@ private:
     BatchTaskModel* model_ = nullptr;
     QHash<quint64, BackendProcess*> running_;
     QHash<quint64, QElapsedTimer> runningTimers_;
+    QHash<quint64, MuxPerformance> taskPerformance_;
     QHash<quint64, QString> pendingLogLines_;
     struct LogEntry { quint64 taskId; QString line; };
     QVector<LogEntry> logEntries_;
@@ -65,6 +68,7 @@ private:
     QPushButton* cancelButton_ = nullptr;
     QPushButton* clearButton_ = nullptr;
     QLabel* stateLabel_ = nullptr;
+    QLabel* taskDetails_ = nullptr;
     QPlainTextEdit* log_ = nullptr;
     bool externalAvailable_ = true;
     bool active_ = false;

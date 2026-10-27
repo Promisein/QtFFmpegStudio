@@ -5,6 +5,7 @@
 #include <QComboBox>
 #include <QClipboard>
 #include <QGuiApplication>
+#include <QLabel>
 #include <QFileInfo>
 #include <QProcess>
 #include <QPushButton>
@@ -23,7 +24,53 @@ private slots:
     void cancellationStopsCurrentAndPendingTasks();
     void runsTwoAtOnceAndKeepsResultsSeparate();
     void stopsThreeRunningTasksWithoutStartingPending();
+    void taskDetailsFollowSavedOptions();
+    void batchAppliesSavedVideoOptions();
 };
+
+void BatchWidgetTest::taskDetailsFollowSavedOptions()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString gpuInput = directory.filePath("gpu.mp4");
+    const QString cpuInput = directory.filePath("cpu.mp4");
+    for (const QString& path : {gpuInput, cpuInput}) {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("queued fixture");
+    }
+    TranscodeOptions options;
+    options.videoBackend = QStringLiteral("nvenc");
+    options.videoCodec = QStringLiteral("h264");
+    options.quality = QStringLiteral("bitrate");
+    options.videoBitrateKbps = 3500;
+    options.maxShortEdge = 720;
+    options.outputFps = 30;
+    BatchWidget widget(nullptr, [&options] { return options; });
+    auto* table = widget.findChild<QTableView*>("batchTable");
+    auto* details = widget.findChild<QLabel*>("batchTaskDetails");
+    QVERIFY(table && details);
+    QCOMPARE(widget.enqueueFiles({gpuInput}, directory.path()), 1);
+    options.videoBackend = QStringLiteral("software");
+    options.videoCodec = QStringLiteral("mpeg4");
+    options.quality = QStringLiteral("small");
+    options.maxShortEdge = 0;
+    options.outputFps = 0;
+    QCOMPARE(widget.enqueueFiles({cpuInput}, directory.path()), 1);
+
+    table->setCurrentIndex(widget.model()->index(0, 0));
+    QVERIFY(details->text().contains(QStringLiteral("GPU")));
+    QVERIFY(details->text().contains(QStringLiteral("H.264")));
+    QVERIFY(details->text().contains(QStringLiteral("3500 kbps")));
+    QVERIFY(details->text().contains(QStringLiteral("720")));
+    QVERIFY(details->text().contains(QStringLiteral("30 fps")));
+    table->setCurrentIndex(widget.model()->index(1, 0));
+    QVERIFY(details->text().contains(QStringLiteral("CPU")));
+    QVERIFY(details->text().contains(QStringLiteral("MPEG-4")));
+    QVERIFY(!details->text().contains(QStringLiteral("GPU")));
+    QVERIFY(details->text().contains(QStringLiteral("小体积")));
+    QVERIFY(!details->text().contains(QStringLiteral("3500")));
+}
 
 static bool makeMedia(const QString& path, int duration = 1)
 {
@@ -47,6 +94,35 @@ static bool hasAudioAndVideo(const QString& path)
     if (!process.waitForFinished(10000) || process.exitCode() != 0) return false;
     const QByteArray streams = process.readAllStandardOutput();
     return streams.contains("video") && streams.contains("audio");
+}
+
+void BatchWidgetTest::batchAppliesSavedVideoOptions()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath("input.mp4");
+    QVERIFY(makeMedia(input, 2));
+    TranscodeOptions options;
+    options.quality = QStringLiteral("bitrate");
+    options.videoBitrateKbps = 500;
+    options.maxShortEdge = 72;
+    options.outputFps = 30;
+    BatchWidget widget(nullptr, [&options] { return options; });
+    QCOMPARE(widget.enqueueFiles({input}, directory.path()), 1);
+    options.maxShortEdge = 0;
+    options.outputFps = 0;
+    widget.startQueue();
+    QTRY_VERIFY_WITH_TIMEOUT(!widget.active(), 20000);
+    QCOMPARE(widget.model()->task(0).status, BatchTask::Status::Succeeded);
+    const QString output = widget.model()->task(0).options.outputPath;
+    const QString ffprobe = QFileInfo(QString::fromUtf8(FFMPEG_TEST_TOOL)).dir().filePath("ffprobe.exe");
+    QProcess probe;
+    probe.start(ffprobe, {"-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,r_frame_rate",
+                          "-of", "csv=p=0", output});
+    QVERIFY(probe.waitForFinished(10000));
+    QCOMPARE(probe.exitCode(), 0);
+    const QByteArray info = probe.readAllStandardOutput();
+    QVERIFY2(info.contains("96,72,30/1"), info.constData());
 }
 
 void BatchWidgetTest::processesSequentiallyAndContinuesAfterFailure()
@@ -209,10 +285,13 @@ void BatchWidgetTest::runsTwoAtOnceAndKeepsResultsSeparate()
 
     auto* table = widget.findChild<QTableView*>(QStringLiteral("batchTable"));
     auto* selector = widget.findChild<QComboBox*>(QStringLiteral("batchLogSelector"));
-    QVERIFY(table && selector);
+    auto* details = widget.findChild<QLabel*>(QStringLiteral("batchTaskDetails"));
+    QVERIFY(table && selector && details);
     QCOMPARE(selector->currentIndex(), 0);
     table->setCurrentIndex(widget.model()->index(0, 0));
     QVERIFY(log->toPlainText().contains(QStringLiteral("中文 一.mp4")));
+    QVERIFY(details->text().contains(QStringLiteral("Mux 总计")));
+    QVERIFY(details->text().contains(QStringLiteral("成功")));
     QVERIFY(!log->toPlainText().contains(QStringLiteral("third.mp4")));
     copyLog->click();
     QCOMPARE(QGuiApplication::clipboard()->text(), log->toPlainText());
@@ -222,9 +301,12 @@ void BatchWidgetTest::runsTwoAtOnceAndKeepsResultsSeparate()
     QVERIFY(!clearLog->isEnabled());
     table->setCurrentIndex(widget.model()->index(2, 0));
     QVERIFY(log->toPlainText().contains(QStringLiteral("third.mp4")));
+    QVERIFY(details->text().contains(QStringLiteral("Mux 总计")));
     QVERIFY(!log->toPlainText().contains(QStringLiteral("中文 一.mp4")));
     table->setCurrentIndex(widget.model()->index(1, 0));
     QVERIFY(log->toPlainText().contains(QStringLiteral("失败")));
+    QVERIFY(details->text().contains(QStringLiteral("失败")));
+    QVERIFY(!details->text().contains(QStringLiteral("Mux 总计")));
     selector->setCurrentIndex(0);
     QVERIFY(!log->toPlainText().contains(QStringLiteral("中文 一.mp4")));
     QVERIFY(log->toPlainText().contains(QStringLiteral("third.mp4")));

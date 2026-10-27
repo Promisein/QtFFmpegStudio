@@ -12,6 +12,8 @@
 
 extern "C" {
 #include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
+#include <libavutil/opt.h>
 }
 
 namespace fs = std::filesystem;
@@ -44,8 +46,46 @@ static void usage()
 {
     Logger::info("usage", "用法: FFmpegProjectBackend.exe -i <输入.mp4> -o <输出.mp4> "
                           "[-rotate 90|180|270] [-speed 正数] "
-                          "[-vcodec h264|mpeg4] [-acodec aac|ac3] [--overwrite] "
-                          "[--temp-output <GUI预留临时文件>]");
+                          "[-vcodec h264|mpeg4] [-vbackend software|nvenc] "
+                          "[-acodec aac|ac3] [-quality default|high|balanced|small|bitrate] "
+                          "[-bitrate kbps] [-height short-edge] [-fps fps] [--overwrite] "
+                          "[--temp-output <GUI预留临时文件>] [--check-nvenc]");
+}
+
+static int checkNvenc()
+{
+    const AVCodec* encoder = avcodec_find_encoder_by_name("h264_nvenc");
+    if (!encoder) {
+        std::cout << "QFS_NVENC_CHECK status=missing_encoder" << std::endl;
+        return 3;
+    }
+    AVCodecContext* context = avcodec_alloc_context3(encoder);
+    if (!context) {
+        std::cout << "QFS_NVENC_CHECK status=init_failed" << std::endl;
+        return 4;
+    }
+    context->codec_id = AV_CODEC_ID_H264;
+    context->width = 320;
+    context->height = 240;
+    context->pix_fmt = AV_PIX_FMT_YUV420P;
+    context->time_base = AVRational{1, 25};
+    context->framerate = AVRational{25, 1};
+    context->bit_rate = 2000000;
+    context->gop_size = 25;
+    context->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+    const bool options_supported = av_opt_set(context->priv_data, "preset", "p4", 0) >= 0
+        && av_opt_set(context->priv_data, "rc", "vbr", 0) >= 0
+        && av_opt_set(context->priv_data, "cq", "23", 0) >= 0;
+    if (!options_supported) {
+        avcodec_free_context(&context);
+        std::cout << "QFS_NVENC_CHECK status=unsupported_options" << std::endl;
+        return 5;
+    }
+    const int result = avcodec_open2(context, encoder, nullptr);
+    avcodec_free_context(&context);
+    std::cout << "QFS_NVENC_CHECK status="
+              << (result == 0 ? "available" : "init_failed") << std::endl;
+    return result == 0 ? 0 : 4;
 }
 
 static int parseInt(const std::wstring& text)
@@ -70,6 +110,8 @@ int wmain(int argc, wchar_t* argv[])
 {
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
+
+    if (argc == 2 && std::wstring(argv[1]) == L"--check-nvenc") return checkNvenc();
 
     std::wstring input;
     std::wstring output;
@@ -106,6 +148,26 @@ int wmain(int argc, wchar_t* argv[])
                 if (value == L"h264") config.video_codec = VIDEO_CODEC_H264;
                 else if (value == L"mpeg4") config.video_codec = VIDEO_CODEC_MPEG4;
                 else throw std::invalid_argument("不支持的视频编码器");
+            } else if (flag == L"-vbackend") {
+                if (value == L"software") config.video_backend = VIDEO_BACKEND_SOFTWARE;
+                else if (value == L"nvenc") config.video_backend = VIDEO_BACKEND_NVENC;
+                else throw std::invalid_argument("不支持的视频编码后端");
+            } else if (flag == L"-quality") {
+                if (value == L"default") config.quality = 0;
+                else if (value == L"high") config.quality = 1;
+                else if (value == L"balanced") config.quality = 2;
+                else if (value == L"small") config.quality = 3;
+                else if (value == L"bitrate") config.quality = 4;
+                else throw std::invalid_argument("不支持的画质选项");
+            } else if (flag == L"-bitrate") {
+                config.video_bitrate_kbps = parseInt(value);
+                if (config.video_bitrate_kbps < 100 || config.video_bitrate_kbps > 100000) throw std::invalid_argument("视频码率须在 100 至 100000 kbps 之间");
+            } else if (flag == L"-height") {
+                config.max_short_edge = parseInt(value);
+                if (config.max_short_edge < 2 || config.max_short_edge > 4320 || config.max_short_edge % 2) throw std::invalid_argument("分辨率限制必须为 2 至 4320 的偶数");
+            } else if (flag == L"-fps") {
+                config.output_fps = parseInt(value);
+                if (config.output_fps < 1 || config.output_fps > 120) throw std::invalid_argument("帧率须在 1 至 120 fps 之间");
             } else if (flag == L"-acodec") {
                 if (value == L"aac") config.audio_codec = AUDIO_CODEC_AAC;
                 else if (value == L"ac3") config.audio_codec = AUDIO_CODEC_AC3;
@@ -115,7 +177,11 @@ int wmain(int argc, wchar_t* argv[])
             }
         }
 
+        if (config.quality == 4 && config.video_bitrate_kbps == 0) throw std::invalid_argument("指定码率模式需要 -bitrate");
         if (input.empty() || output.empty()) throw std::invalid_argument("必须指定 -i 和 -o");
+        if (config.video_backend == VIDEO_BACKEND_NVENC && config.video_codec != VIDEO_CODEC_H264) {
+            throw std::invalid_argument("NVENC 后端目前只支持 -vcodec h264");
+        }
 
         const fs::path inputPath = fs::weakly_canonical(fs::path(input));
         const fs::path outputPath = fs::weakly_canonical(fs::path(output));

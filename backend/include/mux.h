@@ -13,9 +13,6 @@
 void mux_thread(const std::string& output_file,
                 AVRational output_time_base,
                 double expected_output_duration_seconds,
-                DeepCopyPacketQueue& video_q,
-                DeepCopyPacketQueue& audio_q,
-                const ProcessingConfig& config,
                 Pipeline* pipeline);
 
 #endif //FFMPEGPROJECT_MUX_H

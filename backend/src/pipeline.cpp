@@ -4,11 +4,15 @@
 #include "pipeline.h"
 
 void Pipeline::report_error(const std::string& msg) {
-    std::lock_guard<std::mutex> lock(error_mtx_);
-    error_msg_ = msg;
-    error_flag_.store(true, std::memory_order_release);
-    stop_all_queues();
+    {
+        std::lock_guard<std::mutex> lock(error_mtx_);
+        if (!error_flag_.load(std::memory_order_relaxed)) error_msg_ = msg;
+        error_flag_.store(true, std::memory_order_release);
+    }
+    // Synchronize with the condition-variable predicate before notifying.
+    { std::lock_guard<std::mutex> lock(encoder_params_mtx_); }
     encoder_params_cv_.notify_all();
+    stop_all_queues();
 }
 
 bool Pipeline::publish_encoder_parameters(bool video, const AVCodecContext* context) {
@@ -42,8 +46,7 @@ void Pipeline::stop_all_queues() {
     audio_pkt_queue.stop();
     video_frame_ringbuf.stop();
     audio_frame_ringbuf.stop();
-    en_video_pkt_queue.stop();
-    en_audio_pkt_queue.stop();
+    mux_packets.stop();
 }
 
 bool Pipeline::has_error() const {

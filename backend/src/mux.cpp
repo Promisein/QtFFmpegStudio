@@ -6,10 +6,6 @@
 #include "ffmpeg_raii.h"
 #include "logger.h"
 #include "mux_progress.h"
-#include <queue>
-#include <functional>
-#include <memory>
-#include <thread>
 #include <cstdio>
 #include <cmath>
 #include <algorithm>
@@ -21,16 +17,6 @@ extern "C" {
 #include <libavutil/avutil.h>
 #include <libavutil/error.h>
 }
-
-struct PacketComparator {
-    bool operator()(const AVPacket* a, const AVPacket* b) const {
-        if (!a || !b) return false;
-        if (a->pts == b->pts) {
-            return a->stream_index > b->stream_index;
-        }
-        return a->pts > b->pts;
-    }
-};
 
 struct MuxTiming {
     using Clock = std::chrono::steady_clock;
@@ -45,6 +31,9 @@ struct MuxTiming {
     Duration write{};
     Duration trailer{};
     Duration sleep{};
+    Duration packet_wait{};
+    int wait_calls = 0;
+    size_t queue_peak = 0;
     Duration cleanup{};
     int sleep_calls = 0;
 
@@ -60,6 +49,9 @@ struct MuxTiming {
                      + " audio_pop_ms=" + std::to_string(ms(audio_pop))
                      + " write_ms=" + std::to_string(ms(write))
                      + " trailer_ms=" + std::to_string(ms(trailer))
+                     + " wait_ms=" + std::to_string(ms(packet_wait))
+                     + " wait_calls=" + std::to_string(wait_calls)
+                     + " queue_peak=" + std::to_string(queue_peak)
                      + " sleep_ms=" + std::to_string(ms(sleep))
                      + " cleanup_ms=" + std::to_string(ms(cleanup))
                      + " sleep_calls=" + std::to_string(sleep_calls)
@@ -71,9 +63,6 @@ struct MuxTiming {
 void mux_thread(const std::string& output_file,
                 AVRational output_time_base,
                 double expected_output_duration_seconds,
-                DeepCopyPacketQueue& video_q,
-                DeepCopyPacketQueue& audio_q,
-                const ProcessingConfig& config,
                 Pipeline* pipeline) {
     MuxTiming timing;
     Logger::info("Mux", std::string("开始创建输出文件: ") + output_file);
@@ -147,6 +136,11 @@ void mux_thread(const std::string& output_file,
         Logger::info("Mux", "无音频流参数，仅处理视频");
     }
 
+    if (!audio_stream) {
+        pipeline->report_error("[Mux] 创建音频输出流失败");
+        cleanup_output(out_fmt_ctx_raw);
+        return;
+    }
     av_dump_format(out_fmt_ctx_raw, 0, output_file.c_str(), 1);
 
     if (!(out_fmt_ctx_raw->oformat->flags & AVFMT_NOFILE)) {
@@ -173,125 +167,68 @@ void mux_thread(const std::string& output_file,
 
     Logger::info("Mux", "开始写入数据包...");
 
-    std::priority_queue<AVPacket*, std::vector<AVPacket*>, PacketComparator> packet_queue;
-
     int video_packet_count = 0;
     int audio_packet_count = 0;
-    bool video_done = false;
-    bool audio_done = false;
     int64_t audio_accumulated_samples = 0;
-    MuxProgress overallProgress(expected_output_duration_seconds, audio_stream != nullptr);
+    const AVRational audio_encoder_time_base{1, audio_enc_par->sample_rate};
+    MuxProgress overallProgress(expected_output_duration_seconds, true);
+    PacketPtr pkt(av_packet_alloc());
+    if (!pkt) {
+        pipeline->report_error("[Mux] 分配数据包失败");
+        cleanup_output(out_fmt_ctx_raw);
+        return;
+    }
 
-    while (!video_done || !audio_done || !packet_queue.empty()) {
-        if (!video_done) {
-            PacketPtr video_pkt(av_packet_alloc());
-            if (video_pkt) {
-                const auto pop_started = MuxTiming::Clock::now();
-                bool success = video_q.pop(*video_pkt);
-                timing.video_pop += MuxTiming::Clock::now() - pop_started;
-                if (success) {
-                    video_pkt->stream_index = video_stream->index;
-
-                    if (video_pkt->pts < 0) {
-                        Logger::warn("Mux", std::string("无效的视频包PTS: ")
-                                     + std::to_string(video_pkt->pts) + "，跳过此包");
-                        continue;
-                    }
-
-                    av_packet_rescale_ts(video_pkt.get(), output_time_base, video_stream->time_base);
-                    packet_queue.push(video_pkt.release());
-                    video_packet_count++;
-
-                    if (video_packet_count % 100 == 0) {
-                        Logger::debug("Mux", std::string("视频包: pts=")
-                                      + std::to_string(packet_queue.empty() ? -1 : packet_queue.top()->pts));
-                    }
-                } else {
-                    video_done = true;
-                }
-            }
+    while (true) {
+        bool video = false;
+        const auto wait_started = MuxTiming::Clock::now();
+        bool waited = false;
+        const auto result = pipeline->mux_packets.pop(*pkt, video, output_time_base, audio_encoder_time_base, &waited);
+        if (waited) {
+            timing.packet_wait += MuxTiming::Clock::now() - wait_started;
+            ++timing.wait_calls;
         }
-
-        if (audio_stream && !audio_done) {
-            PacketPtr audio_pkt(av_packet_alloc());
-            if (audio_pkt) {
-                const auto pop_started = MuxTiming::Clock::now();
-                bool success = audio_q.pop(*audio_pkt);
-                timing.audio_pop += MuxTiming::Clock::now() - pop_started;
-                if (success) {
-                    audio_pkt->stream_index = audio_stream->index;
-
-                    if (audio_pkt->duration <= 0) {
-                        int frame_size = audio_stream->codecpar->frame_size;
-                        if (frame_size <= 0) frame_size = 1024;
-                        audio_pkt->duration = frame_size;
-                    }
-
-                    audio_pkt->pts = av_rescale_q(audio_accumulated_samples,
-                                                  (AVRational){1, audio_stream->codecpar->sample_rate},
-                                                  audio_stream->time_base);
-                    audio_accumulated_samples += audio_pkt->duration;
-                    audio_pkt->dts = audio_pkt->pts;
-
-                    packet_queue.push(audio_pkt.release());
-                    audio_packet_count++;
-
-                    if (audio_packet_count % 100 == 0) {
-                        Logger::debug("Mux", std::string("音频包: pts=")
-                                      + std::to_string(packet_queue.empty() ? -1 : packet_queue.top()->pts)
-                                      + ", 累计=" + std::to_string(audio_accumulated_samples));
-                    }
-                } else {
-                    audio_done = true;
-                }
-            }
+        if (result == MuxPacketQueue::Result::Stopped) {
+            if (!pipeline->has_error()) pipeline->report_error("[Mux] 处理已终止");
+            break;
         }
-
-        while (!packet_queue.empty()) {
-            AVPacket* pkt = packet_queue.top();
-            packet_queue.pop();
-
-            const int stream_index = pkt->stream_index;
-            const int64_t packet_pts = pkt->pts;
-            const int64_t packet_duration = pkt->duration;
-            const int packet_size = pkt->size;
-            const AVRational packet_time_base = out_fmt_ctx_raw->streams[stream_index]->time_base;
-            const auto write_started = MuxTiming::Clock::now();
-            ret = av_interleaved_write_frame(out_fmt_ctx_raw, pkt);
-            timing.write += MuxTiming::Clock::now() - write_started;
-            if (ret < 0) {
-                av_strerror(ret, err_buf, sizeof(err_buf));
-                Logger::error("Mux", std::string("写入数据包失败: ") + err_buf
-                              + " (stream=" + std::to_string(stream_index)
-                              + ", pts=" + std::to_string(packet_pts)
-                              + ", size=" + std::to_string(packet_size) + ")");
-                if (pipeline) pipeline->report_error(std::string("[Mux] 写入数据包失败: ") + err_buf);
-            } else if (packet_pts != AV_NOPTS_VALUE) {
-                const double end_seconds = (packet_pts + std::max<int64_t>(packet_duration, 0))
-                    * av_q2d(packet_time_base);
-                if (const auto percent = overallProgress.observe(
-                        stream_index == video_stream->index, end_seconds)) {
-                    Logger::progress("transcode", *percent);
-                }
-            }
-
-            int total_packets = video_packet_count + audio_packet_count;
-            if (total_packets % 1000 == 0) {
-                Logger::info("Mux", std::string("已处理 ") + std::to_string(total_packets)
-                             + " 个包（视频: " + std::to_string(video_packet_count)
-                             + ", 音频: " + std::to_string(audio_packet_count) + "）");
-            }
-
-            av_packet_free(&pkt);
+        if (result == MuxPacketQueue::Result::End) break;
+        pkt->stream_index = video ? video_stream->index : audio_stream->index;
+        if (pkt->pts == AV_NOPTS_VALUE || pkt->dts == AV_NOPTS_VALUE) {
+            pipeline->report_error("[Mux] 编码包缺少 PTS 或 DTS");
+            av_packet_unref(pkt.get());
+            break;
         }
-
-        if (packet_queue.empty() && (!video_done || !audio_done)) {
-            const auto sleep_started = MuxTiming::Clock::now();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            timing.sleep += MuxTiming::Clock::now() - sleep_started;
-            ++timing.sleep_calls;
+        if (video) {
+            av_packet_rescale_ts(pkt.get(), output_time_base, video_stream->time_base);
+            ++video_packet_count;
+        } else {
+            if (pkt->duration <= 0) {
+                pkt->duration = audio_stream->codecpar->frame_size > 0 ? audio_stream->codecpar->frame_size : 1024;
+            }
+            audio_accumulated_samples += pkt->duration;
+            av_packet_rescale_ts(pkt.get(), audio_encoder_time_base, audio_stream->time_base);
+            ++audio_packet_count;
+        }
+        const int stream_index = pkt->stream_index;
+        const int64_t packet_pts = pkt->pts;
+        const int64_t packet_duration = pkt->duration;
+        const AVRational packet_time_base = out_fmt_ctx_raw->streams[stream_index]->time_base;
+        const auto write_started = MuxTiming::Clock::now();
+        ret = av_interleaved_write_frame(out_fmt_ctx_raw, pkt.get());
+        timing.write += MuxTiming::Clock::now() - write_started;
+        av_packet_unref(pkt.get());
+        if (ret < 0) {
+            av_strerror(ret, err_buf, sizeof(err_buf));
+            pipeline->report_error(std::string("[Mux] 写入数据包失败: ") + err_buf);
+            break;
+        }
+        if (packet_pts != AV_NOPTS_VALUE) {
+            const double end_seconds = (packet_pts + std::max<int64_t>(packet_duration, 0)) * av_q2d(packet_time_base);
+            if (const auto percent = overallProgress.observe(video, end_seconds)) Logger::progress("transcode", *percent);
         }
     }
+    timing.queue_peak = pipeline->mux_packets.peak();
 
     // 错误终止 vs 正常收尾
     bool has_error = pipeline && pipeline->has_error();

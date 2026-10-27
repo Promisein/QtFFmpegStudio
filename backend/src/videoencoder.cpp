@@ -279,7 +279,10 @@ void video_encode_thread(AVCodecParameters* src_codec_par, AVRational output_tim
                 while ((ret = avcodec_receive_packet(enc_ctx.get(), pkt.get())) >= 0) {
                     pkt->stream_index = 0;
                     av_packet_rescale_ts(pkt.get(), enc_ctx->time_base, output_time_base);
-                    out_q.push(*pkt);
+                    if (!out_q.push(*pkt)) {
+                        if (pipeline && !pipeline->has_error()) pipeline->report_error("[VideoEncoder] 编码包入队失败");
+                        return;
+                    }
                     av_packet_unref(pkt.get());
                 }
                 if (ret != AVERROR(EAGAIN) && ret != AVERROR_EOF) {
@@ -306,10 +309,8 @@ void video_encode_thread(AVCodecParameters* src_codec_par, AVRational output_tim
             ret = avcodec_send_frame(enc_ctx.get(), frame_to_encode);
             if (ret < 0) {
                 av_strerror(ret, err_buf, sizeof(err_buf));
-                Logger::warn("VideoEncoder", std::string("第") + std::to_string(output_frame_count)
-                             + "帧编码发送失败：" + err_buf);
-                av_frame_unref(local_frame.get());
-                continue;
+                if (pipeline) pipeline->report_error(std::string("[VideoEncoder] 发送编码帧失败：") + err_buf);
+                return;
             }
 
             output_frame_count++;
@@ -320,8 +321,8 @@ void video_encode_thread(AVCodecParameters* src_codec_par, AVRational output_tim
                 if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
                 if (ret < 0) {
                     av_strerror(ret, err_buf, sizeof(err_buf));
-                    Logger::warn("VideoEncoder", std::string("接收编码包失败：") + err_buf);
-                    break;
+                    if (pipeline) pipeline->report_error(std::string("[VideoEncoder] 接收编码包失败：") + err_buf);
+                    return;
                 }
 
                 pkt->stream_index = 0;
@@ -333,7 +334,10 @@ void video_encode_thread(AVCodecParameters* src_codec_par, AVRational output_tim
                                   + "（第" + std::to_string(output_frame_count) + "帧）");
                 }
 
-                out_q.push(*pkt);
+                if (!out_q.push(*pkt)) {
+                    if (pipeline && !pipeline->has_error()) pipeline->report_error("[VideoEncoder] 编码包入队失败");
+                    return;
+                }
                 av_packet_unref(pkt.get());
             }
 
@@ -347,18 +351,27 @@ void video_encode_thread(AVCodecParameters* src_codec_par, AVRational output_tim
                     frame_to_encode->pts = output_frame_count;
 
                     ret = avcodec_send_frame(enc_ctx.get(), frame_to_encode);
-                    if (ret < 0) continue;
+                    if (ret < 0) {
+                        if (pipeline) pipeline->report_error("[VideoEncoder] 发送重复帧失败");
+                        return;
+                    }
 
                     output_frame_count++;
 
                     while (true) {
                         ret = avcodec_receive_packet(enc_ctx.get(), pkt.get());
                         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
-                        if (ret < 0) break;
+                        if (ret < 0) {
+                            if (pipeline) pipeline->report_error("[VideoEncoder] 接收重复帧编码包失败");
+                            return;
+                        }
 
                         pkt->stream_index = 0;
                         av_packet_rescale_ts(pkt.get(), enc_ctx->time_base, output_time_base);
-                        out_q.push(*pkt);
+                        if (!out_q.push(*pkt)) {
+                            if (pipeline && !pipeline->has_error()) pipeline->report_error("[VideoEncoder] 编码包入队失败");
+                            return;
+                        }
                         av_packet_unref(pkt.get());
                     }
                 }
@@ -374,7 +387,8 @@ void video_encode_thread(AVCodecParameters* src_codec_par, AVRational output_tim
     ret = avcodec_send_frame(enc_ctx.get(), nullptr);
     if (ret < 0) {
         av_strerror(ret, err_buf, sizeof(err_buf));
-        Logger::warn("VideoEncoder", std::string("刷新编码器失败：") + err_buf);
+        if (pipeline) pipeline->report_error(std::string("[VideoEncoder] 刷新编码器失败：") + err_buf);
+        return;
     }
 
     while (true) {
@@ -382,13 +396,16 @@ void video_encode_thread(AVCodecParameters* src_codec_par, AVRational output_tim
         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
         if (ret < 0) {
             av_strerror(ret, err_buf, sizeof(err_buf));
-            Logger::warn("VideoEncoder", std::string("刷新时接收编码包失败：") + err_buf);
-            break;
+            if (pipeline) pipeline->report_error(std::string("[VideoEncoder] 刷新时接收编码包失败：") + err_buf);
+            return;
         }
 
         av_packet_rescale_ts(pkt.get(), enc_ctx->time_base, output_time_base);
         pkt->stream_index = 0;
-        out_q.push(*pkt);
+        if (!out_q.push(*pkt)) {
+            if (pipeline && !pipeline->has_error()) pipeline->report_error("[VideoEncoder] 编码包入队失败");
+            return;
+        }
         av_packet_unref(pkt.get());
     }
 

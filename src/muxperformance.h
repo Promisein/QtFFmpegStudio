@@ -17,6 +17,8 @@ struct MuxPerformance
     double writeMs = 0;
     double trailerMs = 0;
     double sleepMs = 0;
+    double waitMs = 0;
+    int queuePeak = 0;
 
     static std::optional<MuxPerformance> parseLine(const QString& line)
     {
@@ -44,7 +46,9 @@ struct MuxPerformance
                               values.value(QStringLiteral("audio_pop_ms")),
                               values.value(QStringLiteral("write_ms")),
                               values.value(QStringLiteral("trailer_ms")),
-                              values.value(QStringLiteral("sleep_ms"))};
+                              values.value(QStringLiteral("sleep_ms")),
+                              values.value(QStringLiteral("wait_ms"), 0),
+                              static_cast<int>(values.value(QStringLiteral("queue_peak"), 0))};
     }
 };
 
@@ -55,10 +59,10 @@ inline QString formatMuxPerformance(const MuxPerformance& value)
     const auto seconds = [](double milliseconds) {
         return QString::number(milliseconds / 1000.0, 'f', 3) + QStringLiteral(" 秒");
     };
-    return QStringLiteral("Mux 总计 %1 · 等参数 %2 · 取视频包 %3 · 取音频包 %4\n固定休眠 %5 · 写包 %6 · 写文件尾 %7")
-        .arg(seconds(value.totalMs), seconds(value.paramsWaitMs),
-             seconds(value.videoPopMs), seconds(value.audioPopMs),
-             seconds(value.sleepMs), seconds(value.writeMs), seconds(value.trailerMs));
+    return QStringLiteral("Mux 总计 %1 · 等参数 %2 · 等待编码包 %3 · 队列峰值 %4 包\n写包 %5 · 写文件尾 %6")
+        .arg(seconds(value.totalMs), seconds(value.paramsWaitMs), seconds(value.waitMs))
+        .arg(value.queuePeak)
+        .arg(seconds(value.writeMs), seconds(value.trailerMs));
 }
 
 #endif

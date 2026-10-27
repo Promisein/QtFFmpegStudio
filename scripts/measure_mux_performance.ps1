@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string] $InputFile = '',
     [string] $BuildDirectory = (Join-Path $PSScriptRoot '..\build'),
     [string] $FfmpegRoot = (Join-Path $PSScriptRoot '..\..\FFmpegProject\ffmpeg-4.4-full_build-shared'),
@@ -113,6 +113,9 @@ function Invoke-Case {
         audio_pop_ms = $timings.audio_pop_ms
         write_ms = $timings.write_ms
         trailer_ms = $timings.trailer_ms
+        wait_ms = if ($timings.ContainsKey('wait_ms')) { $timings.wait_ms } else { 0 }
+        wait_calls = if ($timings.ContainsKey('wait_calls')) { $timings.wait_calls } else { 0 }
+        queue_peak = if ($timings.ContainsKey('queue_peak')) { $timings.queue_peak } else { 0 }
         sleep_ms = $timings.sleep_ms
         sleep_calls = $timings.sleep_calls
         output_bytes = [long]$info.format.size
@@ -140,5 +143,5 @@ for ($round = 1; $round -le $Runs; ++$round) {
 }
 $csvPath = Join-Path $reportPath 'results.csv'
 $results | Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding UTF8
-$results | Format-Table backend,run,process_ms,mux_ms,params_wait_ms,video_pop_ms,audio_pop_ms,write_ms,trailer_ms,sleep_ms -AutoSize
+$results | Format-Table backend,run,process_ms,mux_ms,params_wait_ms,video_pop_ms,audio_pop_ms,write_ms,trailer_ms,wait_ms,queue_peak,sleep_ms -AutoSize
 Write-Host "结果：$csvPath"

@@ -142,6 +142,13 @@ if (BUILD_TESTING)
             backend/src/safe_output.cpp)
     target_include_directories(QtFFmpegStudio_safe_output_tests PRIVATE backend/include)
     add_test(NAME safe_output COMMAND QtFFmpegStudio_safe_output_tests)
+    add_executable(QtFFmpegStudio_mux_queue_tests tests/test_mux_queue.cpp backend/src/pipeline.cpp)
+    set_target_properties(QtFFmpegStudio_mux_queue_tests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+    target_include_directories(QtFFmpegStudio_mux_queue_tests PRIVATE backend/include "${FFMPEG_ROOT}/include")
+    target_link_libraries(QtFFmpegStudio_mux_queue_tests PRIVATE "${FFMPEG_ROOT}/lib/libavcodec.dll.a" "${FFMPEG_ROOT}/lib/libavutil.dll.a")
+    add_dependencies(QtFFmpegStudio_mux_queue_tests FFmpegProjectBackend)
+    add_test(NAME mux_queue COMMAND QtFFmpegStudio_mux_queue_tests)
+    set_tests_properties(mux_queue PROPERTIES TIMEOUT 20)
     add_executable(QtFFmpegStudio_mux_progress_tests
             tests/test_mux_progress.cpp
             backend/include/mux_progress.h)
@@ -165,7 +172,7 @@ if (BUILD_TESTING)
         endif ()
         set_tests_properties(options_preview simulated_task real_transcode media_probe
                 engineering_settings batch_model batch_queue batch_integration safe_output
-                transcode_progress_parser mux_progress
+                transcode_progress_parser mux_progress mux_queue
                 PROPERTIES ENVIRONMENT_MODIFICATION "${TEST_ENVIRONMENT_MODIFICATIONS}")
     endif ()
 endif ()

@@ -16,7 +16,7 @@ extern "C" {
 void demux_thread(AVFormatContext* fmt_ctx, int video_stream_idx, int audio_stream_idx,
                   PacketQueue<AVPacket>& video_q, PacketQueue<AVPacket>& audio_q,
                   Pipeline* pipeline) {
-    AVPacket pkt;
+    AVPacket pkt{};
 
     // 计算总时长用于进度上报
     double total_duration_sec = 0.0;
@@ -32,7 +32,7 @@ void demux_thread(AVFormatContext* fmt_ctx, int video_stream_idx, int audio_stre
 
     while (av_read_frame(fmt_ctx, &pkt) >= 0) {
         // 错误级联终止
-        if (pipeline && pipeline->has_error()) break;
+        if (pipeline && pipeline->has_error()) { av_packet_unref(&pkt); break; }
 
         // FPS counter + progress
         if (pipeline) {
@@ -65,13 +65,21 @@ void demux_thread(AVFormatContext* fmt_ctx, int video_stream_idx, int audio_stre
         }
 
         if (pkt.stream_index == video_stream_idx) {
-            AVPacket video_pkt;
-            av_packet_ref(&video_pkt, &pkt);
-            video_q.push(video_pkt);
+            AVPacket video_pkt{};
+            if (av_packet_ref(&video_pkt, &pkt) < 0) {
+                av_packet_unref(&pkt);
+                if (pipeline) pipeline->report_error("[Demux] 视频包引用失败");
+                break;
+            }
+            if (!video_q.push(video_pkt)) av_packet_unref(&video_pkt);
         } else if (pkt.stream_index == audio_stream_idx) {
-            AVPacket audio_pkt;
-            av_packet_ref(&audio_pkt, &pkt);
-            audio_q.push(audio_pkt);
+            AVPacket audio_pkt{};
+            if (av_packet_ref(&audio_pkt, &pkt) < 0) {
+                av_packet_unref(&pkt);
+                if (pipeline) pipeline->report_error("[Demux] 音频包引用失败");
+                break;
+            }
+            if (!audio_q.push(audio_pkt)) av_packet_unref(&audio_pkt);
         }
         av_packet_unref(&pkt);
     }

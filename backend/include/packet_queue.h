@@ -25,11 +25,12 @@ public:
     std::atomic<bool> stopped_{false};
 
     // 推送Packet（加锁）
-    void push(const T& pkt) {
+    bool push(const T& pkt) {
         std::lock_guard<std::mutex> lock(mtx);
-        if (stopped_.load(std::memory_order_acquire)) return;
+        if (stopped_.load(std::memory_order_acquire)) return false;
         queue.push(pkt);
         cond.notify_one();
+        return true;
     }
 
     // 取出Packet（阻塞/非阻塞）
@@ -42,7 +43,7 @@ public:
         } else if (queue.empty()) {
             return false;
         }
-        if (queue.empty()) return false;
+        if (queue.empty() || stopped_.load(std::memory_order_acquire)) return false;
         pkt = queue.front();
         queue.pop();
         return true;
@@ -50,8 +51,16 @@ public:
 
     // 级联终止：唤醒所有等待线程，后续push/pop均返回false
     void stop() {
-        stopped_.store(true, std::memory_order_release);
+        { std::lock_guard<std::mutex> lock(mtx);
+          stopped_.store(true, std::memory_order_release); }
         cond.notify_all();
+    }
+
+    ~PacketQueue() {
+        while (!queue.empty()) {
+            av_packet_unref(&queue.front());
+            queue.pop();
+        }
     }
 
     // 判断队列是否为空

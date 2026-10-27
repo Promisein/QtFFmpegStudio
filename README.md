@@ -82,7 +82,7 @@ ctest --test-dir build --output-on-failure --parallel 4
 
 ## 验证
 
-项目使用 Qt Test / CTest 覆盖参数、媒体分析、单文件与批量转码、取消、输出保护、进度和日志。当前测试列表为 11 项；请在自己的构建环境运行上面的 `ctest` 命令确认结果。
+项目使用 Qt Test / CTest 覆盖参数、媒体分析、单文件与批量转码、取消、输出保护、进度和日志。当前测试列表为 12 项；请在自己的构建环境运行上面的 `ctest` 命令确认结果。
 
 转码输出还可用以下脚本检查流信息、时长、完整解码、短静音和旋转方向：
 
@@ -92,7 +92,7 @@ powershell -File .\scripts\verify_transcode_correctness.ps1 -BuildDirectory .\bu
 
 脚本使用 FFmpeg 生成合成素材；结果保存在构建目录的 `correctness-日期时间/` 下。测量结果与适用范围见[转码正确性验证记录](verification/2026-10-26-transcode-correctness.md)。这些自动检查不能代替真实视频的人工试听、播放和另一台 Windows 电脑上的分发包验收。
 
-后端日志现在会显示 mux 等待音视频包、写包和固定休眠等耗时。可复现的 CPU/NVENC 对比方法与结果见 [Mux 性能测量](verification/2026-10-27-mux-performance.md)，脚本为 `scripts/measure_mux_performance.ps1`。
+后端日志显示 mux 等待编码包、写包、等待次数及队列峰值。可复现的 CPU/NVENC 对比方法与结果见 [Mux 性能测量](verification/2026-10-27-mux-performance.md)，脚本为 `scripts/measure_mux_performance.ps1`；事件驱动改造的前后对照见 [Mux 事件驱动对照](verification/2026-10-27-mux-event-comparison.md)。
 
 ## 打包
 

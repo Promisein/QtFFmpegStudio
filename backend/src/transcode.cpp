@@ -118,9 +118,7 @@ TranscodeResult transcode_single(const std::string& input_path,
     std::thread mux_th(mux_thread, output_file,
                        output_time_base,
                        expected_output_duration_seconds,
-                       std::ref(pipeline.en_video_pkt_queue),
-                       std::ref(pipeline.en_audio_pkt_queue),
-                       config, &pipeline);
+                       &pipeline);
 
     // 等待当前任务的所有线程完成
     demux_th.join();

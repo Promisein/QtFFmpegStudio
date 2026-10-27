@@ -41,6 +41,8 @@ private slots:
     void backendRejectsNvencForMpeg4();
     void guiGpuSelectionUsesNvencBackend();
     void backendReportsNvencAvailability();
+    void muxDoesNotSleepBetweenPackets();
+    void backendPreservesAacEncoderDelay();
     void backendControlsResolutionAndFrameRate_data();
     void backendControlsResolutionAndFrameRate();
 };
@@ -132,6 +134,51 @@ void RealTranscodeTest::backendControlsResolutionAndFrameRate()
     }
     QVERIFY(qAbs(videoDuration - 4.0 / speed) < 0.1);
     QVERIFY(qAbs(videoDuration - audioDuration) < 0.2);
+}
+
+void RealTranscodeTest::muxDoesNotSleepBetweenPackets()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath("input.mp4");
+    const QString output = directory.filePath("output.mp4");
+    QVERIFY(makeFixture(input, 2));
+    QProcess process;
+    process.start(QDir(QCoreApplication::applicationDirPath()).filePath("FFmpegProjectBackend.exe"),
+                  {"-i", input, "-o", output, "-acodec", "aac"});
+    QVERIFY(process.waitForFinished(30000));
+    QCOMPARE(process.exitCode(), 0);
+    const QString log = QString::fromUtf8(process.readAllStandardOutput());
+    const QRegularExpression timing(QStringLiteral("sleep_ms=([0-9.]+)"));
+    const auto match = timing.match(log);
+    QVERIFY(match.hasMatch());
+    QVERIFY2(match.captured(1).toDouble() < 1.0, qPrintable(match.captured(1)));
+}
+
+void RealTranscodeTest::backendPreservesAacEncoderDelay()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath("input.mp4");
+    const QString output = directory.filePath("output.mp4");
+    QVERIFY(makeFixture(input, 2));
+    QProcess process;
+    process.start(QDir(QCoreApplication::applicationDirPath()).filePath("FFmpegProjectBackend.exe"),
+                  {"-i", input, "-o", output, "-vcodec", "h264", "-acodec", "aac"});
+    QVERIFY(process.waitForFinished(30000));
+    QCOMPARE(process.exitCode(), 0);
+    QProcess probe;
+    const QString ffprobe = QFileInfo(QString::fromUtf8(FFMPEG_TEST_TOOL)).dir().filePath("ffprobe.exe");
+    probe.start(ffprobe, {"-v", "error", "-select_streams", "a:0", "-show_packets",
+                          "-show_entries", "packet=pts,dts,side_data_list", "-of", "json", output});
+    QVERIFY(probe.waitForFinished(10000));
+    QCOMPARE(probe.exitCode(), 0);
+    const auto packets = QJsonDocument::fromJson(probe.readAllStandardOutput()).object().value("packets").toArray();
+    QVERIFY(!packets.isEmpty());
+    const auto first = packets.first().toObject();
+    QVERIFY(first.value("pts").toVariant().toLongLong() < 0);
+    QVERIFY(first.value("dts").toVariant().toLongLong() < 0);
+    QVERIFY(!first.value("side_data_list").toArray().isEmpty());
 }
 
 void RealTranscodeTest::guiGpuSelectionUsesNvencBackend()
@@ -389,7 +436,7 @@ void RealTranscodeTest::validMediaProducesFileAndUtf8Log()
     QVERIFY(elapsed->text().contains(QStringLiteral("秒")));
     QVERIFY(resultSummary->text().contains(QStringLiteral("CPU")));
     QVERIFY(resultSummary->text().contains(QStringLiteral("处理倍率")));
-    QVERIFY(resultSummary->text().contains(QStringLiteral("固定休眠")));
+    QVERIFY(resultSummary->text().contains(QStringLiteral("等待编码包")));
     QVERIFY(resultSummary->text().contains(QStringLiteral("写包")));
     QVERIFY(!progressValues.isEmpty());
     QVERIFY(sawEstimatedProgress);
@@ -412,9 +459,9 @@ void RealTranscodeTest::validMediaProducesFileAndUtf8Log()
     start->click();
     QCOMPARE(elapsed->text(), QStringLiteral("耗时：计时中"));
     QVERIFY(resultSummary->text().contains(QStringLiteral("转码中")));
-    QVERIFY(!resultSummary->text().contains(QStringLiteral("固定休眠")));
+    QVERIFY(!resultSummary->text().contains(QStringLiteral("等待编码包")));
     QTRY_VERIFY_WITH_TIMEOUT(state->text().contains(QStringLiteral("转码完成")), 15000);
-    QVERIFY(resultSummary->text().contains(QStringLiteral("固定休眠")));
+    QVERIFY(resultSummary->text().contains(QStringLiteral("等待编码包")));
     QVERIFY(elapsed->text().contains(QStringLiteral("秒")));
     QVERIFY(QFileInfo(directory.filePath("other.mp4")).size() > 0);
 }
@@ -580,6 +627,7 @@ void RealTranscodeTest::backendEmitsStructuredProgressAndHumanLog()
                                 QStringLiteral("write_ms"),
                                 QStringLiteral("trailer_ms"),
                                 QStringLiteral("sleep_ms"),
+                                QStringLiteral("wait_ms"),
                                 QStringLiteral("cleanup_ms")}) {
         const double value = measuredMilliseconds(name);
         QVERIFY2(value >= 0, qPrintable(name));

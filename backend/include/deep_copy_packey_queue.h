@@ -1,177 +1,81 @@
-//
-// Created by Jianing on 2025/12/24.
-//
+#ifndef FFMPEGPROJECT_MUX_PACKET_QUEUE_H
+#define FFMPEGPROJECT_MUX_PACKET_QUEUE_H
 
-#ifndef FFMPEGPROJECT_DEEP_COPY_PACKEY_QUEUE_H
-#define FFMPEGPROJECT_DEEP_COPY_PACKEY_QUEUE_H
-
-#include <queue>
-#include <mutex>
+#include "ffmpeg_raii.h"
 #include <condition_variable>
-#include <atomic>
-#include <chrono> // 用于超时等待
-
+#include <mutex>
+#include <queue>
+#include <algorithm>
 extern "C" {
-#include <libavcodec/packet.h>
+#include <libavutil/mathematics.h>
 }
 
-//template <typename T>
-//class DeepCopyPacketQueue {
-//public:
-//    std::queue<T*> queue;
-//    std::mutex mtx;
-//    std::condition_variable cond;
-//    bool is_running = true; // 新增：标记队列是否还在运行（用于退出通知）
-//
-//    // 推送Packet指针（转移所有权，不释放）
-//    void push(T* pkt) {
-//        std::lock_guard<std::mutex> lock(mtx);
-//        if (!is_running) { // 已停止运行，直接释放Packet，避免内存泄漏
-//            av_packet_free(&pkt);
-//            return;
-//        }
-//        queue.push(pkt);
-//        cond.notify_one();
-//    }
-//
-//    // 取出Packet指针（阻塞/非阻塞，修复核心逻辑）
-//    bool pop(T*& pkt, bool block = true, int timeout_ms = 1000) { // 新增超时参数
-//        std::unique_lock<std::mutex> lock(mtx);
-//        pkt = nullptr; // 初始化pkt为null，避免野指针
-//
-//        if (block) {
-//            // 修复1：带超时的wait + 检查is_running（避免无限阻塞）
-//            // 等待条件：队列非空 OR 队列已停止运行
-//            bool wait_ok = cond.wait_for(lock, std::chrono::milliseconds(timeout_ms),
-//                                         [this]() { return !queue.empty() || !is_running; });
-//
-//            // 如果等待超时 或 队列已停止且为空 → 返回false
-//            if (!wait_ok || (!is_running && queue.empty())) {
-//                return false;
-//            }
-//        } else if (queue.empty()) {
-//            return false;
-//        }
-//
-//        // 修复2：双重检查队列是否为空（避免极小窗口的空队列访问）
-//        if (queue.empty()) {
-//            return false;
-//        }
-//
-//        // 正常取出Packet
-//        pkt = queue.front();
-//        queue.pop();
-//        return true;
-//    }
-//
-//    // 判断队列是否为空
-//    bool is_empty() {
-//        std::lock_guard<std::mutex> lock(mtx);
-//        return queue.empty();
-//    }
-//
-//    // 清空队列并释放所有Packet
-//    void flush() {
-//        std::lock_guard<std::mutex> lock(mtx);
-//        while (!queue.empty()) {
-//            T* pkt = queue.front();
-//            av_packet_free(&pkt);
-//            queue.pop();
-//        }
-//    }
-//
-//    // 新增：停止队列运行（通知所有wait的线程退出）
-//    void stop() {
-//        std::lock_guard<std::mutex> lock(mtx);
-//        is_running = false;
-//        cond.notify_all(); // 唤醒所有等待的线程，避免死锁
-//    }
-//
-//    // 析构函数：确保资源释放
-//    ~DeepCopyPacketQueue() {
-//        stop();
-//        flush();
-//    }
-//};
-
-// 专门用于AVPacket的线程安全队列（支持深拷贝）
-class DeepCopyPacketQueue {
-private:
-    std::queue<AVPacket*> queue;  // 存储指针，避免浅拷贝问题
-    std::mutex mtx;
-    std::condition_variable cond;
-    bool done = false;  // 队列结束标志
-    std::atomic<bool> stopped_{false};  // 级联终止标记
-
+// 两路 FIFO 共用同一互斥锁和条件变量；只有 mux 消费。
+class MuxPacketQueue {
 public:
-    ~DeepCopyPacketQueue() {
-        clear();
-    }
-
-    // 推送Packet（深拷贝）
-    void push(const AVPacket& pkt) {
-        std::lock_guard<std::mutex> lock(mtx);
-        if (stopped_.load(std::memory_order_acquire)) return;
-        AVPacket* pkt_copy = av_packet_clone(&pkt);
-        if (pkt_copy) {
-            queue.push(pkt_copy);
-            cond.notify_one();
+    enum class Result { Packet, End, Stopped };
+    bool push(bool video, const AVPacket& packet) {
+        PacketPtr copy(av_packet_clone(&packet));
+        if (!copy) return false;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (stopped_ || (video ? video_done_ : audio_done_)) return false;
+            auto& queue = video ? video_ : audio_;
+            queue.push(std::move(copy));
+            peak_ = std::max(peak_, video_.size() + audio_.size());
         }
-    }
-
-    // 取出Packet
-    bool pop(AVPacket& pkt, bool block = true) {
-        std::unique_lock<std::mutex> lock(mtx);
-
-        if (block) {
-            cond.wait(lock, [this]() {
-                return !queue.empty() || done || stopped_.load(std::memory_order_acquire);
-            });
-        }
-
-        if (queue.empty()) {
-            return false;
-        }
-
-        // 转移packet数据
-        av_packet_move_ref(&pkt, queue.front());
-
-        // 释放队列中的packet指针
-        av_packet_free(&queue.front());
-        queue.pop();
-
+        ready_.notify_one();
         return true;
     }
-
-    // 标记队列结束
-    void mark_done() {
-        std::lock_guard<std::mutex> lock(mtx);
-        done = true;
-        cond.notify_all();
+    void finish(bool video) {
+        { std::lock_guard<std::mutex> lock(mutex_); (video ? video_done_ : audio_done_) = true; }
+        ready_.notify_all();
     }
-
-    // 级联终止：错误时立即唤醒所有等待线程
     void stop() {
-        std::lock_guard<std::mutex> lock(mtx);
-        stopped_.store(true, std::memory_order_release);
-        done = true;
-        cond.notify_all();
+        { std::lock_guard<std::mutex> lock(mutex_); stopped_ = true; }
+        ready_.notify_all();
     }
-
-    // 清空队列
-    void clear() {
-        std::lock_guard<std::mutex> lock(mtx);
-        while (!queue.empty()) {
-            av_packet_free(&queue.front());
-            queue.pop();
+    Result pop(AVPacket& packet, bool& video, AVRational video_tb, AVRational audio_tb, bool* waited = nullptr) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        const auto ready = [this] {
+            return stopped_ || ((video_done_ || !video_.empty()) && (audio_done_ || !audio_.empty()));
+        };
+        if (waited) *waited = !ready();
+        ready_.wait(lock, ready);
+        if (stopped_) return Result::Stopped;
+        if (video_.empty() && audio_.empty()) return Result::End;
+        if (video_.empty()) video = false;
+        else if (audio_.empty()) video = true;
+        else {
+            const AVPacket* v = video_.front().get();
+            const AVPacket* a = audio_.front().get();
+            const int64_t vt = v->dts == AV_NOPTS_VALUE ? v->pts : v->dts;
+            const int64_t at = a->dts == AV_NOPTS_VALUE ? a->pts : a->dts;
+            video = vt == AV_NOPTS_VALUE || (at != AV_NOPTS_VALUE && av_compare_ts(vt, video_tb, at, audio_tb) <= 0);
         }
+        auto& queue = video ? video_ : audio_;
+        av_packet_move_ref(&packet, queue.front().get());
+        queue.pop();
+        return Result::Packet;
     }
-
-    // 判断队列是否为空且已结束
-    bool is_empty_and_done() {
-        std::lock_guard<std::mutex> lock(mtx);
-        return queue.empty() && done;
-    }
+    size_t peak() { std::lock_guard<std::mutex> lock(mutex_); return peak_; }
+private:
+    std::mutex mutex_;
+    std::condition_variable ready_;
+    std::queue<PacketPtr> video_, audio_;
+    bool video_done_ = false, audio_done_ = false, stopped_ = false;
+    size_t peak_ = 0;
 };
 
-#endif //FFMPEGPROJECT_DEEP_COPY_PACKEY_QUEUE_H
+// 保留编码线程现有的每路生产接口。
+class DeepCopyPacketQueue {
+public:
+    DeepCopyPacketQueue(MuxPacketQueue& queue, bool video) : queue_(queue), video_(video) {}
+    bool push(const AVPacket& packet) { return queue_.push(video_, packet); }
+    void mark_done() { queue_.finish(video_); }
+    void stop() { queue_.stop(); }
+private:
+    MuxPacketQueue& queue_;
+    bool video_;
+};
+#endif

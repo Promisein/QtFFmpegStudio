@@ -1,0 +1,13 @@
+version,backend,run,wall_ms,cpu_ms,peak_mib
+baseline,software,1,3285.99,5625.0,1208.0
+baseline,software,2,3270.97,6156.25,1208.3
+baseline,software,3,3279.84,5890.62,1210.1
+baseline,nvenc,1,3234.26,546.88,280.1
+baseline,nvenc,2,3160.01,546.88,280.1
+baseline,nvenc,3,3180.39,640.62,227.8
+final,software,1,556.64,5484.38,1203.0
+final,software,2,549.18,5000.0,1203.0
+final,software,3,533.8,5531.25,1203.4
+final,nvenc,1,437.13,640.62,280.7
+final,nvenc,2,403.02,593.75,280.5
+final,nvenc,3,426.11,500.0,280.6

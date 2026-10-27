@@ -156,7 +156,10 @@ void audio_encode_thread(AVCodecParameters* src_codec_par, AVRational output_tim
                 return false;
             }
             pkt->stream_index = 1;
-            out_q.push(*pkt);
+            if (!out_q.push(*pkt)) {
+                if (pipeline && !pipeline->has_error()) pipeline->report_error("[AudioEncoder] 编码包入队失败");
+                return false;
+            }
             av_packet_unref(pkt.get());
         }
     };

@@ -21,8 +21,9 @@ public:
     PacketQueue<AVPacket> audio_pkt_queue;
     RingBuffer<AVFrame*> video_frame_ringbuf{30};
     RingBuffer<AVFrame*> audio_frame_ringbuf{30};
-    DeepCopyPacketQueue en_video_pkt_queue;
-    DeepCopyPacketQueue en_audio_pkt_queue;
+    MuxPacketQueue mux_packets;
+    DeepCopyPacketQueue en_video_pkt_queue{mux_packets, true};
+    DeepCopyPacketQueue en_audio_pkt_queue{mux_packets, false};
 
     // --- Error propagation ---
     void report_error(const std::string& msg);

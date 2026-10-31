@@ -6,7 +6,7 @@
 
 | 单文件转码 | 批量队列 |
 | --- | --- |
-| ![单文件界面](assets/screenshots/single.png) | ![批量队列界面](assets/screenshots/batch.png) |
+| ![单文件界面](assets/screenshots/single-refresh.png) | ![批量队列界面](assets/screenshots/batch-refresh.png) |
 
 ## 使用方法
 

@@ -24,6 +24,7 @@ class QShowEvent;
 class BackendProcess;
 class BatchWidget;
 class MediaProbe;
+class VideoPreview;
 class QSettings;
 class QProcess;
 class QWidget;
@@ -38,6 +39,8 @@ public:
     TranscodeOptions readOptions() const;
 
 protected:
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
     void showEvent(QShowEvent* event) override;
 
@@ -70,6 +73,7 @@ private:
     QLabel* mediaState_ = nullptr;
     QLabel* mediaDetails_ = nullptr;
     QPushButton* mediaRetryButton_ = nullptr;
+    VideoPreview* videoPreview_ = nullptr;
     MediaProbe* mediaProbe_ = nullptr;
     QString analyzedInputPath_;
     bool analyzedInputSupported_ = false;

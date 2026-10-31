@@ -1,8 +1,17 @@
 #include "mainwindow.h"
+#include "appicon.h"
+#include "studiotheme.h"
+#include <QButtonGroup>
+#include <QPalette>
+#include <QStyle>
+#include <QDragEnterEvent>
+#include <QMimeData>
+#include <QDropEvent>
 #include "backendprocess.h"
 #include "batchwidget.h"
 #include "elapsedformat.h"
 #include "mediaprobe.h"
+#include "videopreview.h"
 
 #include <QDir>
 #include <QComboBox>
@@ -30,7 +39,6 @@
 #include <QSpinBox>
 #include <QSettings>
 #include <QStatusBar>
-#include <QTabBar>
 #include <QStackedWidget>
 #include <QTextCursor>
 #include <QTimer>
@@ -57,32 +65,19 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
         ? new QSettings(QSettings::NativeFormat, QSettings::UserScope,
                         QStringLiteral("QtFFmpegStudio"), QStringLiteral("QtFFmpegStudio"), this)
         : new QSettings(settingsFile, QSettings::IniFormat, this);
+    QPalette light;
+    light.setColor(QPalette::Window,QColor("#F8FAFC")); light.setColor(QPalette::WindowText,QColor("#182235"));
+    light.setColor(QPalette::Base,Qt::white); light.setColor(QPalette::Text,QColor("#182235"));
+    light.setColor(QPalette::Button,Qt::white); light.setColor(QPalette::ButtonText,QColor("#182235"));
+    light.setColor(QPalette::Highlight,QColor("#1677FF")); light.setColor(QPalette::HighlightedText,Qt::white); setPalette(light);
+    setFont(QFont(QStringLiteral("Microsoft YaHei UI"), 10));
     setWindowTitle(QStringLiteral("QtFFmpegStudio"));
-    resize(1000, 800);
+    setWindowIcon(studioApplicationIcon());
+    resize(1240, 860);
+    setMinimumSize(900, 680);
+    setAcceptDrops(true);
 
     auto* central = new QWidget(this);
-    auto* layout = new QVBoxLayout(central);
-    layout->setSpacing(8);
-    auto* header = new QHBoxLayout;
-    auto* title = new QLabel(QStringLiteral("QtFFmpegStudio"), central);
-    title->setObjectName(QStringLiteral("appTitle"));
-    QFont titleFont = title->font();
-    titleFont.setPointSize(16);
-    titleFont.setBold(true);
-    title->setFont(titleFont);
-    header->addWidget(title);
-    header->addStretch();
-    header->addWidget(new QLabel(QStringLiteral("FFmpeg 图形化转码工具"), central));
-    layout->addLayout(header);
-
-    auto* modeNavigation = new QTabBar(central);
-    modeNavigation->setObjectName(QStringLiteral("modeNavigation"));
-    modeNavigation->setExpanding(true);
-    modeNavigation->addTab(QStringLiteral("单文件转码"));
-    modeNavigation->addTab(QStringLiteral("批量队列"));
-    modeNavigation->addTab(QStringLiteral("模拟任务"));
-    layout->addWidget(modeNavigation);
-
     singleFileControls_ = new QWidget(central);
     singleFileControls_->setObjectName(QStringLiteral("singleFileControls"));
     auto* singlePathsLayout = new QVBoxLayout(singleFileControls_);
@@ -105,6 +100,7 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
     outputPathEdit_->setReadOnly(true);
     outputPathEdit_->setPlaceholderText(QStringLiteral("请选择输出 MP4 文件的位置"));
     outputButton_ = new QPushButton(QStringLiteral("选择输出文件…"), singleFileControls_);
+    outputButton_->setObjectName(QStringLiteral("outputButton"));
     auto* outputRow = new QHBoxLayout;
     outputRow->addWidget(outputPathEdit_);
     outputRow->addWidget(outputButton_);
@@ -114,6 +110,9 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
     mediaGroup->setObjectName(QStringLiteral("mediaInfoGroup"));
     auto* mediaLayout = new QVBoxLayout(mediaGroup);
     mediaState_ = new QLabel(QStringLiteral("等待选择视频"), mediaGroup);
+    mediaState_->setWordWrap(true);
+    mediaState_->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Preferred);
+    mediaState_->setMinimumWidth(90);
     mediaState_->setObjectName(QStringLiteral("mediaState"));
     mediaRetryButton_ = new QPushButton(QStringLiteral("重新分析"), mediaGroup);
     mediaRetryButton_->setObjectName(QStringLiteral("mediaRetryButton"));
@@ -217,7 +216,6 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
     optionsForm->addWidget(frameRateCombo_, 4, 3);
     optionsForm->setColumnStretch(1, 1);
     optionsForm->setColumnStretch(3, 1);
-    layout->addWidget(optionsGroup_);
 
     singleFileTools_ = new QWidget(central);
     singleFileTools_->setObjectName(QStringLiteral("singleFileTools"));
@@ -334,70 +332,117 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
     connect(clearRealLog, &QPushButton::clicked, realLog_, &QPlainTextEdit::clear);
     batchWidget_ = new BatchWidget(taskPages, [this]() { return readOptions(); });
     batchWidget_->setObjectName(QStringLiteral("batchWidget"));
-    taskPages->addWidget(realGroup);
-    taskPages->addWidget(batchWidget_);
-    taskPages->addWidget(simulationGroup);
-    taskPages->setCurrentWidget(realGroup);
-    auto* workspace = new QHBoxLayout;
-    auto* singleSide = new QWidget(central);
-    singleSide->setObjectName(QStringLiteral("singleSideContents"));
-    auto* singleSideLayout = new QVBoxLayout(singleSide);
-    singleSideLayout->setContentsMargins(0, 0, 4, 0);
-    singleSideLayout->addWidget(singleFileControls_);
-    singleSideLayout->addWidget(singleFileTools_);
-    singleSideLayout->addStretch();
-    auto* sideScroll = new QScrollArea(central);
-    sideScroll->setObjectName(QStringLiteral("singleSidePanel"));
-    sideScroll->setWidgetResizable(true);
-    sideScroll->setFrameShape(QFrame::NoFrame);
-    sideScroll->setMinimumWidth(320);
-    sideScroll->setMaximumWidth(410);
-    sideScroll->setWidget(singleSide);
-    workspace->addWidget(sideScroll);
-    workspace->addWidget(taskPages, 1);
-    layout->addLayout(workspace, 1);
-    connect(modeNavigation, &QTabBar::currentChanged, this,
-            [this, taskPages, sideScroll](int index) {
-        taskPages->setCurrentIndex(index);
-        const bool batchTab = index == 1;
-        sideScroll->setVisible(!batchTab);
-        singleFileControls_->setVisible(!batchTab);
-        singleFileTools_->setVisible(!batchTab);
+    // Reuse the existing controls and signal endpoints; only their layout changes.
+    auto* shell = new QHBoxLayout(central);
+    shell->setContentsMargins(0, 0, 0, 0); shell->setSpacing(0);
+    auto* sidebar = new QWidget(central); sidebar->setObjectName("sidebar"); sidebar->setFixedWidth(204);
+    auto* navLayout = new QVBoxLayout(sidebar); navLayout->setContentsMargins(14,28,14,24); navLayout->setSpacing(10);
+    auto* brand = new QLabel(QStringLiteral("QtFFmpegStudio"), sidebar); brand->setObjectName("appTitle");
+    navLayout->addWidget(brand); navLayout->addSpacing(24);
+    auto* navigation = new QButtonGroup(this); navigation->setExclusive(true);
+    QStringList names{QStringLiteral("单文件转码"), QStringLiteral("批量任务"), QStringLiteral("设置")};
+
+    for (int i=0; i<3; ++i) {
+        auto* button = new QPushButton(names[i], sidebar); button->setProperty("nav", true);
+        button->setObjectName(QStringLiteral("navigation%1").arg(i)); button->setCheckable(true);
+        button->setIcon(StudioTheme::icon(i)); button->setIconSize(QSize(22,22));
+        navigation->addButton(button, i); navLayout->addWidget(button);
+        if (i==1) {
+            auto* history = new QPushButton(QStringLiteral("历史记录 · 规划中"), sidebar);
+            history->setProperty("nav",true); history->setEnabled(false);
+            history->setToolTip(QStringLiteral("当前版本尚未保存历史任务")); navLayout->addWidget(history);
+        }
+    }
+    navigation->button(0)->setChecked(true);
+    navLayout->addStretch();
+    auto* tagline = new QLabel(QStringLiteral("FFmpeg 视频处理工具\nC++ · Qt Widgets"),sidebar);
+    tagline->setProperty("muted",true); navLayout->addWidget(tagline);
+    shell->addWidget(sidebar); shell->addWidget(taskPages,1);
+    auto* singlePage = new QWidget(taskPages); singlePage->setObjectName("singlePage");
+    auto* pageLayout = new QVBoxLayout(singlePage); pageLayout->setContentsMargins(28,24,28,20); pageLayout->setSpacing(16);
+    auto* pageTitle = new QLabel(QStringLiteral("视频转码")); pageTitle->setObjectName("pageTitle"); pageLayout->addWidget(pageTitle);
+    auto* subtitle = new QLabel(QStringLiteral("选择视频，调整输出参数，开始一次新的转换。")); subtitle->setProperty("muted",true); pageLayout->addWidget(subtitle);
+    auto* scroll = new QScrollArea; scroll->setWidgetResizable(true); scroll->setFrameShape(QFrame::NoFrame);
+    auto* body = new QWidget; auto* columns = new QHBoxLayout(body); columns->setContentsMargins(0,0,0,0); columns->setSpacing(18);
+    auto* left = new QWidget; auto* leftLayout = new QVBoxLayout(left); leftLayout->setContentsMargins(0,0,0,0); leftLayout->setSpacing(16);
+    // Move media information to its own right-hand card.
+    singlePathsLayout->removeWidget(mediaGroup); mediaGroup->setParent(body);
+    singlePathsLayout->removeItem(outputRow);
+    // Remove the old path labels; captions now belong to the cards/action bar.
+    for (int i=singlePathsLayout->count()-1;i>=0;--i) {
+        if (auto* label=qobject_cast<QLabel*>(singlePathsLayout->itemAt(i)->widget())) { singlePathsLayout->removeWidget(label); delete label; }
+    }
+    auto* inputHint = new QLabel(QStringLiteral("选择视频或拖拽至窗口")); inputHint->setAlignment(Qt::AlignCenter); inputHint->setMinimumHeight(74);
+    inputHint->setObjectName("inputDropHint"); singlePathsLayout->insertWidget(0,inputHint);
+    auto* inputHelp = new QLabel(QStringLiteral("支持带视频和音轨的 MP4 文件")); inputHelp->setProperty("muted",true); inputHelp->setAlignment(Qt::AlignCenter); singlePathsLayout->addWidget(inputHelp);
+    connect(inputPathEdit_, &QLineEdit::textChanged, inputHint, [inputHint,inputHelp](const QString& path) {
+        inputHint->setText(path.isEmpty()?QStringLiteral("选择视频或拖拽至窗口"):QFileInfo(path).fileName());
+        inputHint->setMinimumHeight(path.isEmpty()?74:24); inputHelp->setVisible(path.isEmpty());
     });
-    setCentralWidget(central);
-    central->setObjectName(QStringLiteral("appShell"));
-    setStyleSheet(QStringLiteral(R"(
-        QMainWindow, QWidget#appShell { background: #101827; color: #e8eef7; }
-        QScrollArea#singleSidePanel, QWidget#singleSideContents {
-            background: #101827; border: 0; }
-        QLabel, QGroupBox { color: #e8eef7; }
-        QLabel#appTitle { color: #f8fafc; }
-        QGroupBox { background: #192438; border: 1px solid #2d3c55; border-radius: 10px;
-                    margin-top: 13px; padding: 10px 12px 8px; font-weight: 600; }
-        QGroupBox::title { subcontrol-origin: margin; left: 14px; padding: 0 5px; }
-        QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox, QPlainTextEdit, QTableView {
-            background: #111b2c; color: #e8eef7; border: 1px solid #35455f;
-            border-radius: 6px; padding: 5px; selection-background-color: #3167bb; }
-        QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus, QSpinBox:focus, QPlainTextEdit:focus {
-            border-color: #6da8ff; }
-        QPushButton { background: #273a55; color: #e8eef7; border: 1px solid #395172;
-                      border-radius: 6px; padding: 7px 13px; }
-        QPushButton:hover { background: #345172; }
-        QPushButton:disabled { color: #8291a6; background: #202c3e; border-color: #29394f; }
-        QPushButton#startRealButton, QPushButton#batchStartButton {
-            background: #2563bf; border-color: #4183df; color: white; font-weight: 600; }
-        QPushButton#startRealButton:hover, QPushButton#batchStartButton:hover { background: #3477d5; }
-        QTabBar::tab { background: #1a2940; color: #b9c8dc; padding: 10px 22px;
-                       border: 1px solid #30415c; }
-        QTabBar::tab:selected { background: #285493; color: white; }
-        QProgressBar { background: #142034; color: #edf4ff; border: 1px solid #344968;
-                       border-radius: 6px; text-align: center; min-height: 18px; }
-        QProgressBar::chunk { background: #3986e5; border-radius: 5px; }
-        QHeaderView::section { background: #243652; color: #e8eef7; padding: 6px;
-                               border: 0; border-right: 1px solid #35455f; }
-        QStatusBar { background: #172337; color: #cbd8e9; }
-        QSplitter::handle { background: #35455f; }
-    )"));
+    auto* fileCard=new QGroupBox(QStringLiteral("输入视频")); auto* fileCardLayout=new QVBoxLayout(fileCard); fileCardLayout->addWidget(singleFileControls_);
+    fileCard->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Maximum);
+    optionsGroup_->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Maximum);
+    leftLayout->addWidget(fileCard); leftLayout->addWidget(optionsGroup_); leftLayout->addStretch();
+    optionsGroup_->setTitle(QStringLiteral("输出设置"));
+    // Clear old grid items, keeping the actual option widgets.
+    while(auto* item=optionsForm->takeAt(0)) { if(qobject_cast<QLabel*>(item->widget()) && item->widget()!=nvencStatusLabel_) delete item->widget(); delete item; }
+    auto addOption=[optionsForm](int position,const QString& text,QWidget* control) {
+        auto* cell=new QWidget; cell->setProperty("cardContent",true); auto* cellLayout=new QVBoxLayout(cell); cellLayout->setContentsMargins(0,0,0,0); cellLayout->setSpacing(6);
+        auto* label=new QLabel(text); label->setProperty("muted",true); cellLayout->addWidget(label); cellLayout->addWidget(control);
+        optionsForm->addWidget(cell,position/2,position%2);
+    };
+    addOption(0,QStringLiteral("视频编码"),videoCodecCombo_); addOption(1,QStringLiteral("编码设备"),videoBackendCombo_);
+    addOption(2,QStringLiteral("画质预设"),qualityCombo_); addOption(3,QStringLiteral("音频编码"),audioCodecCombo_);
+    addOption(4,QStringLiteral("分辨率"),resolutionCombo_); addOption(5,QStringLiteral("帧率"),frameRateCombo_);
+    auto* bitrateRow=new QWidget; auto* bitrateLayout=new QHBoxLayout(bitrateRow); bitrateLayout->setContentsMargins(0,0,0,0);
+    bitrateLayout->addWidget(new QLabel(QStringLiteral("视频目标码率"))); bitrateLayout->addWidget(bitrateSpin_);
+    optionsForm->addWidget(bitrateRow,3,0,1,2); bitrateRow->hide();
+    connect(qualityCombo_,&QComboBox::currentIndexChanged,bitrateRow,[this,bitrateRow]{bitrateRow->setVisible(qualityCombo_->currentData()==QStringLiteral("bitrate"));});
+    optionsForm->setColumnStretch(0,1); optionsForm->setColumnStretch(1,1); optionsForm->setColumnStretch(3,0); optionsForm->setVerticalSpacing(12);
+    auto* advanced=new QWidget; auto* advancedForm=new QFormLayout(advanced); advancedForm->setContentsMargins(0,0,0,0);
+    advancedForm->addRow(QStringLiteral("旋转角度"),rotationCombo_); advancedForm->addRow(QStringLiteral("播放倍速"),speedSpin_);
+    optionsForm->addWidget(StudioTheme::disclosure(QStringLiteral("高级设置"),advanced),4,0,1,2);
+    videoPreview_=new VideoPreview(mediaGroup); mediaLayout->insertWidget(0,videoPreview_);
+    connect(inputPathEdit_,&QLineEdit::textChanged,videoPreview_,&VideoPreview::setFile);
+    mediaDetails_->setMinimumWidth(210); mediaDetails_->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Preferred);
+    mediaLayout->addStretch(); mediaGroup->setMinimumWidth(240);
+    for(auto* combo:optionsGroup_->findChildren<QComboBox*>()) {
+        combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon); combo->setMinimumContentsLength(5);
+        combo->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Fixed); combo->setMinimumWidth(0);
+    }
+    columns->addWidget(left,3); columns->addWidget(mediaGroup,2); scroll->setWidget(body); pageLayout->addWidget(scroll,1);
+    // Keep progress visible; hide verbose result/log tools behind one disclosure.
+    auto* details = new QWidget; auto* detailsLayout = new QVBoxLayout(details); detailsLayout->setContentsMargins(0,0,0,0);
+    realLayout->removeItem(realLogTools);
+    detailsLayout->addWidget(resultGroup); detailsLayout->addLayout(realLogTools); realLog_->setFixedHeight(130); detailsLayout->addWidget(realLog_);
+    realLayout->removeWidget(realElapsedLabel_); realButtons->addWidget(realElapsedLabel_);
+    realLayout->removeWidget(realStateLabel_); realButtons->insertWidget(0,realStateLabel_,1);
+    realGroup->setTitle(QStringLiteral("转码状态"));
+    realLayout->setContentsMargins(16,16,16,12); realLayout->setSpacing(6);
+    auto* resultDisclosure=StudioTheme::disclosure(QStringLiteral("结果与运行日志"),details);
+    realLayout->addWidget(resultDisclosure);
+    auto* statusToggle=resultDisclosure->findChild<QPushButton*>();
+    resultDisclosure->layout()->removeWidget(statusToggle); realButtons->addWidget(statusToggle);
+    pageLayout->addWidget(realGroup);
+    realButtons->removeWidget(startRealButton_); realButtons->removeWidget(cancelRealButton_); realButtons->removeWidget(openOutputFolderButton_);
+    auto* actions = new QHBoxLayout; actions->addWidget(new QLabel(QStringLiteral("输出路径"))); actions->addLayout(outputRow,1);
+    actions->addWidget(startRealButton_); actions->addWidget(cancelRealButton_); pageLayout->addLayout(actions);
+    realButtons->addWidget(openOutputFolderButton_); realButtons->addStretch();
+    outputButton_->setText(QStringLiteral("浏览…")); inputButton_->setText(QStringLiteral("选择文件…"));
+    auto* settingsPage = new QWidget; auto* settingsLayout = new QVBoxLayout(settingsPage); settingsLayout->setContentsMargins(28,24,28,24); settingsLayout->setSpacing(18);
+    auto* settingsTitle = new QLabel(QStringLiteral("设置")); settingsTitle->setObjectName("pageTitle"); settingsLayout->addWidget(settingsTitle);
+    auto* settingsHelp = new QLabel(QStringLiteral("转码参数和并行数会自动保存；批量任务使用添加时的参数快照。")); settingsHelp->setWordWrap(true); settingsLayout->addWidget(settingsHelp);
+    auto* deviceGroup=new QGroupBox(QStringLiteral("硬件编码")); auto* deviceLayout=new QVBoxLayout(deviceGroup); deviceLayout->addWidget(nvencStatusLabel_); deviceLayout->addWidget(nvencRefreshButton_); settingsLayout->addWidget(deviceGroup);
+    auto* diagnostic = new QWidget; auto* diagnosticLayout = new QVBoxLayout(diagnostic); diagnosticLayout->addWidget(singleFileTools_); diagnosticLayout->addWidget(simulationGroup);
+    auto* editDefaults=new QPushButton(QStringLiteral("编辑默认转码参数")); settingsLayout->addWidget(editDefaults);
+    connect(editDefaults,&QPushButton::clicked,this,[taskPages,this]{taskPages->setCurrentIndex(0); videoCodecCombo_->setFocus();});
+    settingsLayout->addWidget(StudioTheme::disclosure(QStringLiteral("诊断与模拟工具"),diagnostic)); settingsLayout->addStretch();
+    auto* settingsScroll=new QScrollArea; settingsScroll->setWidgetResizable(true); settingsScroll->setWidget(settingsPage);
+    taskPages->addWidget(singlePage); taskPages->addWidget(batchWidget_); taskPages->addWidget(settingsScroll);
+    connect(navigation, &QButtonGroup::idClicked, taskPages, &QStackedWidget::setCurrentIndex);
+    connect(taskPages,&QStackedWidget::currentChanged,this,[navigation](int index){if(auto* button=navigation->button(index)) button->setChecked(true);});
+    taskPages->setCurrentIndex(0);
+    setCentralWidget(central); central->setObjectName("appShell"); setStyleSheet(StudioTheme::styleSheet());
     statusBar()->showMessage(QStringLiteral("准备就绪"));
 
     backend_ = new BackendProcess(this);
@@ -445,12 +490,13 @@ MainWindow::MainWindow(QWidget* parent, const QString& settingsFile)
             ? QStringLiteral("%1 × %2").arg(info.width).arg(info.height) : unknown;
         const QString fps = info.frameRate > 0
             ? QStringLiteral("%1 fps").arg(QString::number(info.frameRate, 'f', 2)) : unknown;
-        mediaDetails_->setText(QStringLiteral("大小 %1  ·  容器 %2  ·  时长 %3\n视频 %4  ·  %5  ·  %6\n音频 %7  ·  %8 Hz  ·  %9 声道")
+        mediaDetails_->setText(QStringLiteral("文件名    ") + QFileInfo(path).fileName() + QStringLiteral("\n\n文件路径    ") + fontMetrics().elidedText(QDir::toNativeSeparators(path), Qt::ElideMiddle, 235) + QStringLiteral("\n\n") + QStringLiteral("文件大小    %1\n\n容器    %2\n\n时长    %3\n\n分辨率    %5\n\n帧率    %6\n\n视频编码    %4\n\n音频编码    %7\n\n采样率    %8 Hz · %9 声道")
             .arg(size, info.container.isEmpty() ? unknown : info.container, duration,
                  info.videoCodec.isEmpty() ? unknown : info.videoCodec, dimensions, fps,
                  info.hasAudio ? (info.audioCodec.isEmpty() ? unknown : info.audioCodec) : QStringLiteral("无音轨"),
                  info.sampleRate > 0 ? QString::number(info.sampleRate) : unknown,
                  info.channels > 0 ? QString::number(info.channels) : unknown));
+        mediaDetails_->setToolTip(QDir::toNativeSeparators(path));
         mediaState_->setText(info.supported ? QStringLiteral("已分析 · 可尝试转码")
             : QStringLiteral("已分析 · 当前转码要求同时包含视频和音频流"));
         if (taskState_ == TaskState::Idle) {
@@ -795,6 +841,7 @@ bool MainWindow::validatePaths()
 void MainWindow::setTaskState(TaskState state)
 {
     taskState_ = state;
+    if(state != TaskState::Idle) videoPreview_->pause();
     const bool idle = state == TaskState::Idle;
     startSimulationButton_->setEnabled(idle);
     stopSimulationButton_->setEnabled(state == TaskState::Simulating);
@@ -1026,4 +1073,21 @@ void MainWindow::closeEvent(QCloseEvent* event)
     }
     saveSettings();
     QMainWindow::closeEvent(event);
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent* event)
+{
+    const auto urls=event->mimeData()->urls();
+    if(taskState_==TaskState::Idle && urls.size()==1 && urls.first().isLocalFile()
+       && QFileInfo(urls.first().toLocalFile()).suffix().compare("mp4",Qt::CaseInsensitive)==0)
+        event->acceptProposedAction();
+}
+void MainWindow::dropEvent(QDropEvent* event)
+{
+    const auto urls=event->mimeData()->urls();
+    if(taskState_!=TaskState::Idle || urls.size()!=1 || !urls.first().isLocalFile()) return;
+    const QFileInfo file(urls.first().toLocalFile());
+    if(!file.isFile() || file.suffix().compare("mp4",Qt::CaseInsensitive)!=0) return;
+    inputPathEdit_->setText(QDir::toNativeSeparators(file.absoluteFilePath()));
+    event->acceptProposedAction();
 }

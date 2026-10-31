@@ -10,6 +10,7 @@ find_package(Qt6 COMPONENTS
         Core
         Gui
         Widgets
+        Multimedia
         REQUIRED)
 
 include(CTest)
@@ -69,6 +70,15 @@ if (MINGW)
 endif ()
 
 add_library(QtFFmpegStudioGui STATIC
+        src/appicon.h
+        src/appicon.cpp
+        resources/studio.qrc
+        src/taskthumbnailcache.h
+        src/taskthumbnailcache.cpp
+        src/videopreview.h
+        src/videopreview.cpp
+        src/studiotheme.h
+        src/batchcarddelegate.h
         src/mainwindow.h
         src/mainwindow.cpp
         src/mediaprobe.h
@@ -83,9 +93,13 @@ add_library(QtFFmpegStudioGui STATIC
         src/batchwidget.cpp
 )
 target_include_directories(QtFFmpegStudioGui PUBLIC src)
-target_link_libraries(QtFFmpegStudioGui PUBLIC Qt::Core Qt::Gui Qt::Widgets)
+target_link_libraries(QtFFmpegStudioGui PUBLIC Qt::Core Qt::Gui Qt::Widgets Qt::Multimedia)
 
 add_executable(QtFFmpegStudio main.cpp)
+if (WIN32)
+    target_sources(QtFFmpegStudio PRIVATE resources/studio.rc)
+    target_include_directories(QtFFmpegStudio PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/resources")
+endif ()
 target_link_libraries(QtFFmpegStudio PRIVATE QtFFmpegStudioGui)
 add_dependencies(QtFFmpegStudio FFmpegProjectBackend)
 
@@ -198,10 +212,18 @@ if (WIN32 AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
                 "${QT_INSTALL_PATH}/plugins/platforms/qwindows${DEBUG_SUFFIX}.dll"
                 "$<TARGET_FILE_DIR:${PROJECT_NAME}>/plugins/platforms/")
     endif ()
-    foreach (QT_LIB Core Gui Widgets)
+    foreach (QT_LIB Core Gui Widgets Multimedia Network)
         add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy
                 "${QT_INSTALL_PATH}/bin/Qt6${QT_LIB}${DEBUG_SUFFIX}.dll"
                 "$<TARGET_FILE_DIR:${PROJECT_NAME}>")
     endforeach (QT_LIB)
+endif ()
+
+if (WIN32 AND EXISTS "${QT_INSTALL_PATH}/plugins/multimedia")
+    file(GLOB QT_PREVIEW_CODEC_DLLS "${QT_INSTALL_PATH}/bin/avcodec-*.dll" "${QT_INSTALL_PATH}/bin/avformat-*.dll" "${QT_INSTALL_PATH}/bin/avutil-*.dll" "${QT_INSTALL_PATH}/bin/swresample-*.dll" "${QT_INSTALL_PATH}/bin/swscale-*.dll")
+    add_custom_command(TARGET QtFFmpegStudio POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${QT_INSTALL_PATH}/plugins/multimedia" "$<TARGET_FILE_DIR:QtFFmpegStudio>/plugins/multimedia"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${QT_PREVIEW_CODEC_DLLS} "$<TARGET_FILE_DIR:QtFFmpegStudio>"
+        COMMAND_EXPAND_LISTS)
 endif ()

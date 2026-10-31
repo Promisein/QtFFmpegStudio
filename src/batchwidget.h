@@ -3,6 +3,7 @@
 
 #include <QWidget>
 #include <QHash>
+#include <QSet>
 #include <QElapsedTimer>
 #include <functional>
 
@@ -38,6 +39,8 @@ signals:
     void activeChanged(bool active);
 
 private:
+    void showTaskMenu(int row,const QPoint& position);
+    QSet<quint64> individuallyCancelled_;
     void schedulePump();
     void pumpQueue();
     void startTask(int row);

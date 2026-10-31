@@ -9,12 +9,17 @@
 #include <QSpinBox>
 #include <QTemporaryDir>
 #include <QtTest>
+#include <QIcon>
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
 
 class OptionsTest : public QObject
 {
     Q_OBJECT
 
 private slots:
+    void windowHasEmbeddedBrandIcon();
     void defaultValuesAppearInPreview();
     void changedValuesAndPathsAppearInPreview();
     void changingOptionsClearsOldPreview();
@@ -22,6 +27,24 @@ private slots:
     void nvencStatusCanBeRefreshed();
     void qualitySizeAndFpsSettings();
 };
+
+void OptionsTest::windowHasEmbeddedBrandIcon()
+{
+    QTemporaryDir directory; QVERIFY(directory.isValid());
+    MainWindow window(nullptr,directory.filePath("settings.ini"));
+    QVERIFY(!window.windowIcon().isNull());
+    for(int size:{16,32,48,256}) {
+        const QImage image=window.windowIcon().pixmap(size,size).toImage();
+        QVERIFY(!image.isNull()); QVERIFY(image.hasAlphaChannel());
+        QVERIFY(image.pixelColor(0,0).alpha()<20);
+    }
+    window.show(); QCoreApplication::processEvents();
+#ifdef Q_OS_WIN
+    const HWND handle=reinterpret_cast<HWND>(window.winId());
+    QVERIFY(SendMessageW(handle,WM_GETICON,ICON_BIG,0)!=0);
+    QVERIFY(SendMessageW(handle,WM_GETICON,ICON_SMALL,0)!=0);
+#endif
+}
 
 void OptionsTest::nvencStatusCanBeRefreshed()
 {

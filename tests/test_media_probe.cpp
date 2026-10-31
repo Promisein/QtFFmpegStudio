@@ -9,11 +9,14 @@
 #include <QPushButton>
 #include <QTemporaryDir>
 #include <QtTest>
+#include <QMediaPlayer>
+#include <QSlider>
 
 class MediaProbeTest : public QObject
 {
     Q_OBJECT
 private slots:
+    void embeddedPreviewFollowsInputAndPlays();
     void parsesTheStreamsUsedByTheBackend();
     void distinguishesMissingAudioAndMalformedJson();
     void ignoresSupersededInput();
@@ -113,6 +116,8 @@ void MediaProbeTest::mainWindowShowsAndClearsMediaInfo()
     QVERIFY(!retry->isEnabled());
     path->setText(input);
     QTRY_VERIFY_WITH_TIMEOUT(state->text().contains(QStringLiteral("可尝试转码")), 10000);
+    // Release the player before replacing a currently selected file on Windows.
+    window.findChild<QMediaPlayer*>("previewPlayer")->setSource(QUrl());
     QVERIFY(QFile::remove(input));
     QFile damaged(input);
     QVERIFY(damaged.open(QIODevice::WriteOnly));
@@ -173,6 +178,38 @@ void MediaProbeTest::singleStartRequiresCurrentSupportedMedia()
     QTRY_VERIFY_WITH_TIMEOUT(start->isEnabled(), 10000);
     input->clear();
     QVERIFY(!start->isEnabled());
+}
+
+void MediaProbeTest::embeddedPreviewFollowsInputAndPlays()
+{
+    QTemporaryDir dir; QVERIFY(dir.isValid());
+    const QString input=dir.filePath(QStringLiteral("预览 视频.mp4"));
+    QCOMPARE(QProcess::execute(QString::fromUtf8(FFMPEG_TEST_TOOL),
+        {"-hide_banner","-loglevel","error","-f","lavfi","-i","testsrc2=size=160x120:rate=25:duration=4","-f","lavfi","-i","sine=sample_rate=48000:duration=4","-c:v","mpeg4","-c:a","aac","-shortest",input}),0);
+    MainWindow window(nullptr,dir.filePath("settings.ini")); window.show();
+    auto* preview=window.findChild<QWidget*>("videoPreview"); QVERIFY(preview);
+    auto* play=preview->findChild<QPushButton*>("previewPlayButton"); QVERIFY(play); QVERIFY(!play->isEnabled());
+    auto* path=window.findChild<QLineEdit*>("inputPathEdit"); path->setText(input);
+    QTRY_VERIFY_WITH_TIMEOUT(play->isEnabled(),10000);
+    // A real decoded first frame enables playback, without continuing to autoplay.
+    QTRY_COMPARE_WITH_TIMEOUT(play->text(),QStringLiteral("播放"),10000);
+    play->click(); QTRY_COMPARE_WITH_TIMEOUT(play->text(),QStringLiteral("暂停"),5000);
+    auto* player=preview->findChild<QMediaPlayer*>("previewPlayer"); QVERIFY(player);
+    QTRY_VERIFY_WITH_TIMEOUT(player->position()>0,5000);
+    auto* seek=preview->findChild<QSlider*>("previewSeekSlider"); QVERIFY(seek); QTRY_VERIFY(seek->isEnabled());
+    seek->setValue(500); QVERIFY(QMetaObject::invokeMethod(seek,"sliderReleased",Qt::DirectConnection));
+    QTRY_VERIFY_WITH_TIMEOUT(player->position()>=1900,5000);
+    QTest::qWait(180); play->click(); QTRY_COMPARE(play->text(),QStringLiteral("播放"));
+    play->click(); window.findChild<QPushButton*>("navigation1")->click(); QTRY_COMPARE(play->text(),QStringLiteral("播放"));
+    window.findChild<QPushButton*>("navigation0")->click();
+    if(qEnvironmentVariableIsSet("QTFFMPEG_PREVIEW_SCREENSHOT")) QVERIFY(window.grab().save(qEnvironmentVariable("QTFFMPEG_PREVIEW_SCREENSHOT")));
+    path->clear(); QVERIFY(!play->isEnabled());
+    const QString broken=dir.filePath("broken.mp4"); QFile bad(broken); QVERIFY(bad.open(QIODevice::WriteOnly)); bad.write("invalid video"); bad.close();
+    path->setText(broken);
+    auto* status=preview->findChild<QLabel*>("previewStatus"); QVERIFY(status);
+    QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(QStringLiteral("无法预览")),10000);
+    QVERIFY(!play->isEnabled());
+    QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QLabel*>("mediaState")->text()==QStringLiteral("分析失败"),10000);
 }
 
 QTEST_MAIN(MediaProbeTest)

@@ -1,4 +1,11 @@
 #include "batchwidget.h"
+#include "batchcarddelegate.h"
+#include "taskthumbnailcache.h"
+#include "studiotheme.h"
+#include <QButtonGroup>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QMenu>
 #include "batchprogressdelegate.h"
 #include "backendprocess.h"
 #include "elapsedformat.h"
@@ -16,7 +23,6 @@
 #include <QItemSelectionModel>
 #include <QPlainTextEdit>
 #include <QPushButton>
-#include <QSplitter>
 #include <QTableView>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -27,6 +33,12 @@ BatchWidget::BatchWidget(QWidget* parent, std::function<TranscodeOptions()> opti
 {
     model_ = new BatchTaskModel(this);
     auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(28,24,28,20); layout->setSpacing(16);
+    auto* header=new QHBoxLayout; auto* titles=new QVBoxLayout;
+    auto* title=new QLabel(QStringLiteral("任务中心")); title->setObjectName("pageTitle"); titles->addWidget(title);
+    auto* subtitle=new QLabel(QStringLiteral("管理和查看视频转码任务")); subtitle->setProperty("muted",true); titles->addWidget(subtitle);
+    header->addLayout(titles,1); layout->addLayout(header);
+
     auto* directoryRow = new QHBoxLayout;
     outputDirectoryEdit_ = new QLineEdit(this);
     outputDirectoryEdit_->setObjectName(QStringLiteral("batchOutputDirectoryEdit"));
@@ -43,15 +55,16 @@ BatchWidget::BatchWidget(QWidget* parent, std::function<TranscodeOptions()> opti
     addFilesButton_->setObjectName(QStringLiteral("batchAddFilesButton"));
     startButton_ = new QPushButton(QStringLiteral("开始队列"), this);
     startButton_->setObjectName(QStringLiteral("batchStartButton"));
-    cancelButton_ = new QPushButton(QStringLiteral("停止队列"), this);
+    cancelButton_ = new QPushButton(QStringLiteral("取消队列"), this);
     cancelButton_->setObjectName(QStringLiteral("batchCancelButton"));
     clearButton_ = new QPushButton(QStringLiteral("清空任务"), this);
     clearButton_->setObjectName(QStringLiteral("batchClearButton"));
-    buttons->addWidget(addFilesButton_);
+    header->addWidget(addFilesButton_);
+    addFilesButton_->setText(QStringLiteral("＋ 添加任务"));
     buttons->addWidget(startButton_);
     buttons->addWidget(cancelButton_);
     buttons->addWidget(clearButton_);
-    layout->addLayout(buttons);
+
     auto* concurrencyRow = new QHBoxLayout;
     concurrencyRow->addWidget(new QLabel(QStringLiteral("同时转码任务数："), this));
     concurrencyCombo_ = new QComboBox(this);
@@ -61,11 +74,9 @@ BatchWidget::BatchWidget(QWidget* parent, std::function<TranscodeOptions()> opti
     }
     concurrencyRow->addWidget(concurrencyCombo_);
     concurrencyRow->addStretch();
-    layout->addLayout(concurrencyRow);
 
-    auto* splitter = new QSplitter(Qt::Vertical, this);
-    splitter->setObjectName(QStringLiteral("batchContentSplitter"));
-    auto* tablePane = new QWidget(splitter);
+
+    auto* tablePane = new QWidget(this);
     auto* tableLayout = new QVBoxLayout(tablePane);
     tableLayout->setContentsMargins(0, 0, 0, 0);
     table_ = new QTableView(tablePane);
@@ -82,8 +93,57 @@ BatchWidget::BatchWidget(QWidget* parent, std::function<TranscodeOptions()> opti
     table_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Interactive);
     table_->horizontalHeader()->resizeSection(3, 150);
     table_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
+    table_->setShowGrid(false); table_->setAlternatingRowColors(false);
+    table_->horizontalHeader()->hide(); table_->verticalHeader()->hide();
+    table_->verticalHeader()->setDefaultSectionSize(112);
+    table_->setSelectionMode(QAbstractItemView::SingleSelection);
+    auto* covers=new TaskThumbnailCache(this);
+    covers->setObjectName("batchThumbnailCache");
+    connect(model_,&QAbstractItemModel::modelReset,covers,&TaskThumbnailCache::clear);
+    connect(covers,&TaskThumbnailCache::ready,this,[this](quint64 id){
+        const int row=model_->rowForId(id);
+        if(row>=0) table_->viewport()->update(table_->visualRect(model_->index(row,0)));
+    });
+    auto* cardDelegate=new BatchCardDelegate(table_);
+    cardDelegate->thumbnail=[covers](quint64 id,const QString& path){return covers->image(id,path);};
+    cardDelegate->action=[this](int row,const QPoint& position){showTaskMenu(row,position);};
+    cardDelegate->runningElapsed=[this](quint64 id){return runningTimers_.value(id).elapsed();};
+    table_->setItemDelegateForColumn(0,cardDelegate);
+    table_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(table_,&QWidget::customContextMenuRequested,this,[this](const QPoint& point){showTaskMenu(table_->indexAt(point).row(),table_->viewport()->mapToGlobal(point));});
+    auto* elapsedRefresh=new QTimer(this); elapsedRefresh->setInterval(1000);
+    connect(elapsedRefresh,&QTimer::timeout,this,[this]{
+        for(auto it=running_.cbegin();it!=running_.cend();++it) { int row=model_->rowForId(it.key()); if(row>=0) table_->viewport()->update(table_->visualRect(model_->index(row,0))); }
+    }); elapsedRefresh->start();
+    for(int c=1;c<5;++c) table_->hideColumn(c);
+    table_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     table_->setMinimumHeight(180);
+    auto* filters=new QHBoxLayout; auto* filterGroup=new QButtonGroup(this);
+    const QStringList labels{QStringLiteral("全部"),QStringLiteral("进行中"),QStringLiteral("已完成"),QStringLiteral("失败")};
+    for(int f=0;f<4;++f) { auto* button=new QPushButton(labels[f]); button->setProperty("filter",true); button->setCheckable(true); filterGroup->addButton(button,f); filters->addWidget(button); }
+    filterGroup->button(0)->setChecked(true); filters->addStretch(); layout->insertLayout(2,filters);
+    auto updateFilters=[this,filterGroup,labels]() {
+        int counts[4]={model_->rowCount(),0,0,0};
+        for(int row=0;row<model_->rowCount();++row) {
+            const auto status=model_->task(row).status;
+            const int category=status==BatchTask::Status::Running?1:status==BatchTask::Status::Succeeded?2:status==BatchTask::Status::Failed?3:0;
+            if(category) ++counts[category];
+            const int filter=filterGroup->checkedId(); table_->setRowHidden(row,filter!=0 && category!=filter);
+        }
+        for(int f=0;f<4;++f) filterGroup->button(f)->setText(labels[f]+QStringLiteral(" (%1)").arg(counts[f]));
+    };
+    connect(filterGroup,&QButtonGroup::idClicked,this,[updateFilters](int){updateFilters();});
+    connect(model_,&QAbstractItemModel::rowsInserted,this,[updateFilters]{updateFilters();});
+    connect(model_,&QAbstractItemModel::modelReset,this,[updateFilters]{updateFilters();});
+    connect(model_,&QAbstractItemModel::dataChanged,this,[this,updateFilters](const QModelIndex& first,const QModelIndex& last){
+        if(first.column()!=3 || last.column()!=3) updateFilters();
+        for(int row=first.row();row<=last.row();++row) table_->viewport()->update(table_->visualRect(model_->index(row,0)));
+    }); updateFilters();
+
     tableLayout->addWidget(table_);
+    auto* empty=new QLabel(QStringLiteral("队列还是空的\n\n点击“添加任务”，选择要转换的 MP4 视频。")); empty->setAlignment(Qt::AlignCenter); empty->setProperty("muted",true); empty->setMinimumHeight(160); tableLayout->addWidget(empty);
+    auto updateEmpty=[this,empty]{empty->setVisible(model_->rowCount()==0); table_->setVisible(model_->rowCount()!=0);};
+    connect(model_,&QAbstractItemModel::rowsInserted,this,[updateEmpty]{updateEmpty();}); connect(model_,&QAbstractItemModel::modelReset,this,[updateEmpty]{updateEmpty();}); updateEmpty();
 
     stateLabel_ = new QLabel(QStringLiteral("尚未添加批量任务。"), tablePane);
     stateLabel_->setObjectName(QStringLiteral("batchStateLabel"));
@@ -92,10 +152,11 @@ BatchWidget::BatchWidget(QWidget* parent, std::function<TranscodeOptions()> opti
     taskDetails_->setObjectName(QStringLiteral("batchTaskDetails"));
     taskDetails_->setTextFormat(Qt::PlainText);
     taskDetails_->setWordWrap(true);
-    tableLayout->addWidget(taskDetails_);
-    auto* logPane = new QWidget(splitter);
+
+    auto* logPane = new QWidget(this);
     auto* logLayout = new QVBoxLayout(logPane);
     logLayout->setContentsMargins(0, 0, 0, 0);
+    logLayout->addWidget(taskDetails_);
     auto* logHeader = new QHBoxLayout;
     logHeader->addWidget(new QLabel(QStringLiteral("查看日志："), logPane));
     logSelector_ = new QComboBox(logPane);
@@ -119,11 +180,14 @@ BatchWidget::BatchWidget(QWidget* parent, std::function<TranscodeOptions()> opti
     log_->setMaximumBlockCount(2000);
     log_->setPlaceholderText(QStringLiteral("各任务的后端日志会按任务编号显示在这里"));
     logLayout->addWidget(log_);
-    splitter->addWidget(tablePane);
-    splitter->addWidget(logPane);
-    splitter->setStretchFactor(0, 3);
-    splitter->setStretchFactor(1, 2);
-    layout->addWidget(splitter, 1);
+    layout->addWidget(tablePane,1);
+    auto* detailDisclosure=StudioTheme::disclosure(QStringLiteral("任务详情与日志"),logPane,this);
+    log_->setFixedHeight(140); layout->addWidget(detailDisclosure);
+    concurrencyRow->addLayout(buttons);
+    layout->addLayout(concurrencyRow);
+    connect(table_,&QTableView::clicked,this,[detailDisclosure](const QModelIndex&) {
+        auto* toggle=detailDisclosure->findChild<QPushButton*>(); if(toggle) toggle->setChecked(true);
+    });
 
     connect(log_, &QPlainTextEdit::textChanged, this,
             [this, copyLogButton, clearLogButton]() {
@@ -171,6 +235,7 @@ BatchWidget::BatchWidget(QWidget* parent, std::function<TranscodeOptions()> opti
         if (active_) return;
         model_->clear();
         runningTimers_.clear();
+        individuallyCancelled_.clear();
         taskPerformance_.clear();
         pendingLogLines_.clear();
         logEntries_.clear();
@@ -317,12 +382,13 @@ void BatchWidget::startTask(int row)
         backend->deleteLater();
         const int taskRow = model_->rowForId(id);
         if (taskRow >= 0) {
+            const bool cancelled=individuallyCancelled_.remove(id) || stopRequested_;
             const auto status = success ? BatchTask::Status::Succeeded
-                : stopRequested_ ? BatchTask::Status::Cancelled : BatchTask::Status::Failed;
+                : cancelled ? BatchTask::Status::Cancelled : BatchTask::Status::Failed;
             model_->setStatus(taskRow, status, message, elapsedMilliseconds);
             appendLogLine(id, QStringLiteral("[#%1] %2：%3").arg(id)
                               .arg(success ? QStringLiteral("成功")
-                                   : stopRequested_ ? QStringLiteral("已取消")
+                                   : cancelled ? QStringLiteral("已取消")
                                                     : QStringLiteral("失败"), message));
         }
         schedulePump();
@@ -457,4 +523,25 @@ void BatchWidget::refreshControls()
     startButton_->setEnabled(editable && model_->nextPendingIndex() >= 0);
     cancelButton_->setEnabled(active_ && !stopRequested_);
     concurrencyCombo_->setEnabled(editable);
+}
+
+void BatchWidget::showTaskMenu(int row,const QPoint& position)
+{
+    if(row<0 || row>=model_->rowCount()) return;
+    table_->setCurrentIndex(model_->index(row,0));
+        const auto task=model_->task(row); QMenu menu(this);
+        auto* details=menu.addAction(QStringLiteral("查看参数、结果与日志"));
+        connect(details,&QAction::triggered,this,[this,task]{showLogForTask(task.id); auto* toggle=findChild<QPushButton*>(QStringLiteral("任务详情与日志Toggle")); if(toggle) toggle->setChecked(true);});
+        if(task.status==BatchTask::Status::Running || task.status==BatchTask::Status::Pending) {
+            auto* cancel=menu.addAction(QStringLiteral("取消此任务"));
+            connect(cancel,&QAction::triggered,this,[this,task,row]{
+                if(auto* process=running_.value(task.id,nullptr)) { individuallyCancelled_.insert(task.id); process->cancel(); }
+                else if(model_->task(row).status==BatchTask::Status::Pending) { model_->setStatus(row,BatchTask::Status::Cancelled,QStringLiteral("用户取消")); refreshControls(); }
+            });
+        }
+        if(task.status==BatchTask::Status::Succeeded) {
+            auto* open=menu.addAction(QStringLiteral("打开输出文件夹"));
+            connect(open,&QAction::triggered,this,[task]{ QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(task.options.outputPath).absolutePath())); });
+        }
+    menu.exec(position);
 }

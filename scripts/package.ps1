@@ -51,6 +51,8 @@ try {
 }
 foreach ($name in @('QtFFmpegStudio.exe', 'FFmpegProjectBackend.exe', 'ffprobe.exe',
                     'Qt6Core.dll', 'Qt6Gui.dll', 'Qt6Widgets.dll',
+                    'Qt6Multimedia.dll',
+                    'multimedia\ffmpegmediaplugin.dll',
                     'platforms\qwindows.dll', 'avcodec-58.dll',
                     'libstdc++-6.dll')) {
     if (-not (Test-Path -LiteralPath (Join-Path $target $name))) {
